@@ -159,6 +159,7 @@ interface OpenFile {
   model: monaco.editor.ITextModel;
   modified: boolean;
   isExample: boolean;  // true = opened from examples, save should prompt save-as
+  untitledIndex: number | null; // sequence number for untitled files
 }
 
 let openFiles: OpenFile[] = [];
@@ -192,13 +193,14 @@ monaco.editor.addKeybindingRules([
 function fileName(f: OpenFile): string {
   if (f.name) return f.name;
   if (f.path) return f.path.split('/').pop() || f.path;
-  return 'untitled';
+  return `untitled_${f.untitledIndex ?? 0}`;
 }
 
 function createFile(path: string | null, content: string, isExample: boolean = false): OpenFile {
   const model = monaco.editor.createModel(content, 'python');
   const name = isExample && path ? (path.split('/').pop() || null) : null;
-  const file: OpenFile = { path, name, model, modified: false, isExample };
+  const untitledIndex = path === null && !isExample ? untitledCounter++ : null;
+  const file: OpenFile = { path, name, model, modified: false, isExample, untitledIndex };
   model.onDidChangeContent(() => {
     if (file.isExample) {
       // Copy-on-write: editing an example detaches it
@@ -258,7 +260,6 @@ function renderTabs() {
 
 async function newFile() {
   hideWelcome();
-  untitledCounter++;
   createFile(null, '');
   switchToFile(openFiles.length - 1);
 }
@@ -302,7 +303,7 @@ async function saveFileAs() {
   const f = openFiles[activeFileIndex];
   if (!f) return;
   const path = await save({
-    defaultPath: f.path || 'untitled.py',
+    defaultPath: f.path || `${fileName(f)}.py`,
     filters: [{ name: 'Python', extensions: ['py'] }, { name: 'All', extensions: ['*'] }],
   });
   if (!path) return;
@@ -464,20 +465,29 @@ loadSettings().then(() => {
 });
 
 // Prompt on unsaved files before quitting
-getCurrentWindow().onCloseRequested(async (event) => {
-  const unsaved = openFiles.filter(f => f.modified);
-  if (unsaved.length === 0) return;
-  const names = unsaved.map(f => fileName(f)).join(', ');
-  const result = await dialogMessage(
-    `You have unsaved changes in: ${names}`,
-    {
-      title: 'Unsaved Changes',
-      buttons: { yes: 'Quit', no: 'Cancel' },
-    },
-  );
-  if (result !== 'Yes') {
-    event.preventDefault();
+listen('request-close', async () => {
+  for (const f of openFiles) {
+    if (!f.modified) continue;
+    const result = await dialogMessage(
+      `Do you want to save changes to ${fileName(f)}?`,
+      {
+        title: 'Save Changes',
+        buttons: { yes: 'Save', no: "Don't Save", cancel: 'Cancel' },
+      },
+    );
+    if (result === 'Cancel') return;
+    if (result === 'Save') {
+      const idx = openFiles.indexOf(f);
+      switchToFile(idx);
+      if (f.path) {
+        await saveFile();
+      } else {
+        await saveFileAs();
+      }
+      if (f.modified) return; // user cancelled save-as
+    }
   }
+  await getCurrentWindow().destroy();
 });
 
 // Cursor position in status bar

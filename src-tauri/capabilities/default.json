@@ -11,6 +11,8 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-ask",
+    "dialog:allow-message",
+    "core:window:allow-destroy",
     "store:default",
     "fs:default",
     "fs:allow-read",

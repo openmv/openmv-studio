@@ -4,7 +4,7 @@ mod transport;
 
 use std::sync::Mutex;
 use tauri::ipc;
-use tauri::menu::{MenuBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 
 use camera::Camera;
@@ -446,7 +446,11 @@ fn build_menu(
         .hide_others()
         .show_all()
         .separator()
-        .quit()
+        .item(
+            &MenuItemBuilder::with_id("quit", "Quit OpenMV IDE")
+                .accelerator("CmdOrCtrl+Q")
+                .build(app)?,
+        )
         .build()?;
 
     let file = SubmenuBuilder::new(app, "File")
@@ -565,11 +569,21 @@ pub fn run() {
             app.on_menu_event(move |_app, event| {
                 let id = event.id().0.clone();
                 if let Some(window) = handle.get_webview_window("main") {
-                    let _ = window.emit("menu-action", id);
+                    if id == "quit" {
+                        let _ = window.emit("request-close", ());
+                    } else {
+                        let _ = window.emit("menu-action", id);
+                    }
                 }
             });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit("request-close", ());
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
