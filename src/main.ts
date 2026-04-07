@@ -2,7 +2,15 @@ import * as monaco from 'monaco-editor';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Store } from '@tauri-apps/plugin-store';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open, save, message as dialogMessage } from '@tauri-apps/plugin-dialog';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+
+// Disable right-click context menu except on terminal and editor (for copy)
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target as HTMLElement;
+  if (t.closest('.terminal-content') || t.closest('#monaco-editor')) return;
+  e.preventDefault();
+});
 
 // Monaco workers (required for language features)
 self.MonacoEnvironment = {
@@ -92,79 +100,65 @@ async function getStore(): Promise<Store> {
 }
 
 // -- Welcome screen --
+const welcomeEl = document.getElementById('welcome-screen')!;
+let welcomeInitialized = false;
+
 function showWelcome() {
-  const editorArea = document.querySelector('.editor-area') as HTMLElement;
-  // Hide Monaco, show welcome
-  document.getElementById('monaco-editor')!.style.display = 'none';
   document.getElementById('tab-bar')!.style.display = 'none';
+  document.querySelector<HTMLElement>('.editor-area')!.style.display = 'none';
 
-  let existing = document.getElementById('welcome-screen');
-  if (existing) { existing.style.display = ''; return; }
-
-  const welcome = document.createElement('div');
-  welcome.id = 'welcome-screen';
-  welcome.className = 'welcome-screen';
-  welcome.innerHTML = `
-    <div class="welcome-content">
-      <div class="welcome-logo">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="1.5">
-          <circle cx="12" cy="12" r="10"/>
-          <circle cx="12" cy="12" r="4"/>
-          <line x1="12" y1="2" x2="12" y2="6"/>
-          <line x1="12" y1="18" x2="12" y2="22"/>
-          <line x1="2" y1="12" x2="6" y2="12"/>
-          <line x1="18" y1="12" x2="22" y2="12"/>
-        </svg>
-      </div>
-      <h1 class="welcome-title">OpenMV IDE</h1>
-      <p class="welcome-subtitle">Machine Vision Made Simple</p>
-
-      <div class="welcome-actions">
-        <button class="welcome-btn" id="welcome-new">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-          New File
-        </button>
-        <button class="welcome-btn" id="welcome-open">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-          Open File
-        </button>
-      </div>
-
-      <div class="welcome-shortcuts">
-        <h2>Shortcuts</h2>
-        <div class="welcome-shortcut-grid">
-          <div class="ws-row"><span class="ws-key">Ctrl+E</span><span class="ws-desc">Connect / Disconnect</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+R</span><span class="ws-desc">Run / Stop Script</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+N</span><span class="ws-desc">New File</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+O</span><span class="ws-desc">Open File</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+S</span><span class="ws-desc">Save</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+W</span><span class="ws-desc">Close Tab</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+,</span><span class="ws-desc">Settings</span></div>
-          <div class="ws-row"><span class="ws-key">Cmd+=/-</span><span class="ws-desc">Zoom In / Out</span></div>
+  if (!welcomeInitialized) {
+    welcomeEl.innerHTML = `
+      <div class="welcome-inner">
+        <img src="/openmv-logo.svg" class="welcome-logo-img" alt="OpenMV">
+        <h1 class="welcome-title">OpenMV IDE</h1>
+        <p class="welcome-subtitle">Machine Vision Made Simple</p>
+        <div class="welcome-actions">
+          <button class="welcome-btn" id="welcome-new">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+            New File
+          </button>
+          <button class="welcome-btn" id="welcome-open">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+            Open File
+          </button>
+        </div>
+        <div class="welcome-shortcuts">
+          <h2>Shortcuts</h2>
+          <div class="welcome-shortcut-grid">
+            <div class="ws-row"><span class="ws-key">Ctrl+E</span><span class="ws-desc">Connect / Disconnect</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+R</span><span class="ws-desc">Run / Stop Script</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+N</span><span class="ws-desc">New File</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+O</span><span class="ws-desc">Open File</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+S</span><span class="ws-desc">Save</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+W</span><span class="ws-desc">Close Tab</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+,</span><span class="ws-desc">Settings</span></div>
+            <div class="ws-row"><span class="ws-key">Cmd+=/-</span><span class="ws-desc">Zoom In / Out</span></div>
+          </div>
         </div>
       </div>
+    `;
+    document.getElementById('welcome-new')!.onclick = () => { hideWelcome(); newFile(); };
+    document.getElementById('welcome-open')!.onclick = () => openFileDialog();
+    welcomeInitialized = true;
+  }
 
-      <p class="welcome-version">v0.1.0</p>
-    </div>
-  `;
-  editorArea.appendChild(welcome);
-
-  document.getElementById('welcome-new')!.onclick = () => { hideWelcome(); newFile(); };
-  document.getElementById('welcome-open')!.onclick = () => { hideWelcome(); openFileDialog(); };
+  welcomeEl.style.display = '';
 }
 
 function hideWelcome() {
-  const welcome = document.getElementById('welcome-screen');
-  if (welcome) welcome.style.display = 'none';
-  document.getElementById('monaco-editor')!.style.display = '';
+  welcomeEl.style.display = 'none';
   document.getElementById('tab-bar')!.style.display = '';
+  document.querySelector<HTMLElement>('.editor-area')!.style.display = '';
 }
 
 // -- File management --
 interface OpenFile {
   path: string | null; // null = untitled
+  name: string | null; // display name override (kept after example is edited)
   model: monaco.editor.ITextModel;
   modified: boolean;
+  isExample: boolean;  // true = opened from examples, save should prompt save-as
 }
 
 let openFiles: OpenFile[] = [];
@@ -182,7 +176,7 @@ const editor = monaco.editor.create(document.getElementById('monaco-editor')!, {
   renderLineHighlight: 'line',
   automaticLayout: true,
   padding: { top: 8, bottom: 8 },
-  glyphMargin: false,
+  glyphMargin: true,
   folding: true,
   cursorBlinking: 'smooth',
   smoothScrolling: true,
@@ -196,16 +190,22 @@ monaco.editor.addKeybindingRules([
 ]);
 
 function fileName(f: OpenFile): string {
-  if (f.path) {
-    return f.path.split('/').pop() || f.path;
-  }
+  if (f.name) return f.name;
+  if (f.path) return f.path.split('/').pop() || f.path;
   return 'untitled';
 }
 
-function createFile(path: string | null, content: string): OpenFile {
+function createFile(path: string | null, content: string, isExample: boolean = false): OpenFile {
   const model = monaco.editor.createModel(content, 'python');
-  const file: OpenFile = { path, model, modified: false };
+  const name = isExample && path ? (path.split('/').pop() || null) : null;
+  const file: OpenFile = { path, name, model, modified: false, isExample };
   model.onDidChangeContent(() => {
+    if (file.isExample) {
+      // Copy-on-write: editing an example detaches it
+      file.isExample = false;
+      file.path = null;
+      // file.name is kept so the tab still shows the example filename
+    }
     file.modified = true;
     renderTabs();
     scheduleSaveSettings();
@@ -232,6 +232,10 @@ function renderTabs() {
     if (f.modified) {
       const dot = document.createElement('span');
       dot.className = 'dot';
+      tab.appendChild(dot);
+    } else if (f.isExample) {
+      const dot = document.createElement('span');
+      dot.className = 'dot example-dot';
       tab.appendChild(dot);
     }
 
@@ -260,12 +264,12 @@ async function newFile() {
 }
 
 async function openFileDialog() {
-  hideWelcome();
   const path = await open({
     multiple: false,
     filters: [{ name: 'Python', extensions: ['py'] }, { name: 'All', extensions: ['*'] }],
   });
   if (!path) return;
+  hideWelcome();
   const filePath = path as string;
 
   // Check if already open
@@ -315,12 +319,29 @@ async function saveFileAs() {
 async function closeFile(index: number) {
   if (index < 0 || index >= openFiles.length) return;
   const f = openFiles[index];
-  // TODO: proper save dialog via tauri-plugin-dialog ask()
-  // For now, just close
+  if (f.modified) {
+    const result = await dialogMessage(
+      `Do you want to save changes to ${fileName(f)}?`,
+      {
+        title: 'Save Changes',
+        buttons: { yes: 'Save', no: "Don't Save", cancel: 'Cancel' },
+      },
+    );
+    if (result === 'Cancel') return;
+    if (result === 'Yes') {
+      // Switch to the file so saveFile/saveFileAs operates on it
+      switchToFile(index);
+      await saveFile();
+      // If still modified after save attempt (e.g. user cancelled save-as), abort close
+      if (f.modified) return;
+    }
+  }
   f.model.dispose();
   openFiles.splice(index, 1);
   if (openFiles.length === 0) {
+    renderTabs();
     showWelcome();
+    scheduleSaveSettings();
     return;
   } else if (activeFileIndex >= openFiles.length) {
     activeFileIndex = openFiles.length - 1;
@@ -353,6 +374,8 @@ async function saveSettings() {
       gridCols: layout.style.gridTemplateColumns || '',
       gridRows: mainArea.style.gridTemplateRows || '',
       fbRatio: rpH > 0 ? fbH / rpH : 0.5,
+      pollInterval: pollIntervalMs,
+      filterExamples: filterExamples,
     });
     await s.set('editor', {
       fontSize: editor.getOption(monaco.editor.EditorOption.fontSize),
@@ -360,7 +383,7 @@ async function saveSettings() {
     });
     await s.set('shortcuts', shortcutOverrides);
     await s.set('files', {
-      openFiles: openFiles.map(f => f.path).filter(Boolean),
+      openFiles: openFiles.filter(f => !f.isExample).map(f => f.path).filter(Boolean),
       activeFile: openFiles[activeFileIndex]?.path || null,
     });
     await s.save();
@@ -375,10 +398,12 @@ async function loadSettings() {
     const ui = await s.get<{
       scale?: number; theme?: ThemeSetting;
       gridCols?: string; gridRows?: string;
-      fbRatio?: number;
+      fbRatio?: number; pollInterval?: number; filterExamples?: boolean;
     }>('ui');
     if (ui?.scale) uiScale = ui.scale;
     if (ui?.theme) currentThemeSetting = ui.theme;
+    if (ui?.pollInterval) pollIntervalMs = ui.pollInterval;
+    if (ui?.filterExamples !== undefined) filterExamples = ui.filterExamples;
     if (ui?.gridCols) document.querySelector<HTMLElement>('.ide-layout')!.style.gridTemplateColumns = ui.gridCols;
     if (ui?.gridRows) document.querySelector<HTMLElement>('.main-area')!.style.gridTemplateRows = ui.gridRows;
     // Defer FB/tools ratio until layout is rendered
@@ -435,6 +460,24 @@ loadSettings().then(() => {
   setUIScale(uiScale);
   applyTheme(currentThemeSetting);
   renderTabs();
+  if (!filterExamples) loadExamples();
+});
+
+// Prompt on unsaved files before quitting
+getCurrentWindow().onCloseRequested(async (event) => {
+  const unsaved = openFiles.filter(f => f.modified);
+  if (unsaved.length === 0) return;
+  const names = unsaved.map(f => fileName(f)).join(', ');
+  const result = await dialogMessage(
+    `You have unsaved changes in: ${names}`,
+    {
+      title: 'Unsaved Changes',
+      buttons: { yes: 'Quit', no: 'Cancel' },
+    },
+  );
+  if (result !== 'Yes') {
+    event.preventDefault();
+  }
 });
 
 // Cursor position in status bar
@@ -464,20 +507,95 @@ document.querySelectorAll('.ctrl-slider').forEach(slider => {
   });
 });
 
+// -- Examples tree --
+let examplesLoaded = false;
+
+
+async function loadExamples() {
+  if (examplesLoaded) return;
+  const container = document.getElementById('examples-tree');
+  if (!container) return;
+  container.innerHTML = '<div style="padding:8px;color:var(--text-tertiary)">Loading...</div>';
+  try {
+    const args: Record<string, any> = {};
+    if (filterExamples && connectedBoard) args.board = connectedBoard;
+    if (filterExamples && connectedSensor) args.sensor = connectedSensor;
+    const tree = await invoke<any[]>('cmd_list_examples', args);
+    container.innerHTML = '';
+    if (!tree || tree.length === 0) {
+      container.innerHTML = '<div style="padding:8px;color:var(--text-muted)">No examples found</div>';
+      return;
+    }
+    renderTree(container, tree, 0);
+    examplesLoaded = true;
+  } catch (e: any) {
+    container.innerHTML = `<div style="padding:8px;color:var(--accent-red)">Error: ${String(e)}</div>`;
+  }
+}
+
+function renderTree(parent: HTMLElement, nodes: any[], depth: number) {
+  for (const node of nodes) {
+    if (node.type === 'dir') {
+      const section = document.createElement('div');
+      section.className = 'tree-section';
+
+      const header = document.createElement('div');
+      header.className = 'tree-section-header';
+      header.style.paddingLeft = (8 + depth * 12) + 'px';
+      header.innerHTML = `<svg class="tree-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg> ${node.name}`;
+
+      const children = document.createElement('div');
+      children.className = 'tree-children';
+      children.style.display = 'none'; // start collapsed
+      renderTree(children, node.children, depth + 1);
+
+      header.classList.add('collapsed');
+      header.addEventListener('click', () => {
+        header.classList.toggle('collapsed');
+        children.style.display = children.style.display === 'none' ? '' : 'none';
+      });
+
+      section.appendChild(header);
+      section.appendChild(children);
+      parent.appendChild(section);
+    } else {
+      const item = document.createElement('div');
+      item.className = 'tree-item';
+      item.style.paddingLeft = (8 + (depth + 1) * 12) + 'px';
+      item.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg> <span>${node.name}</span>`;
+      item.addEventListener('click', async () => {
+        try {
+          const content = await invoke<string>('cmd_read_file', { path: node.path });
+          hideWelcome();
+          createFile(node.path, content, true);
+          switchToFile(openFiles.length - 1);
+          closeSidePanel();
+        } catch (e) {
+          console.error('Failed to open example:', e);
+        }
+      });
+      parent.appendChild(item);
+    }
+  }
+}
+
 // Sidebar nav buttons (Files, Examples, Docs, Settings -- not Connect/Run)
 const sidePanel = document.getElementById('side-panel')!;
 let activePanelName: string | null = null;
+
+function closeSidePanel() {
+  document.querySelectorAll('.sidebar-btn[data-panel]').forEach(b => b.classList.remove('active'));
+  sidePanel.classList.remove('visible');
+  layout.style.gridTemplateColumns = '56px 0px 1fr 4px 40%';
+  activePanelName = null;
+}
 
 document.querySelectorAll('.sidebar-btn[data-panel]').forEach(btn => {
   btn.addEventListener('click', () => {
     const panel = (btn as HTMLElement).dataset.panel!;
 
     if (activePanelName === panel) {
-      // Toggle off -- hide panel
-      btn.classList.remove('active');
-      sidePanel.classList.remove('visible');
-      layout.style.gridTemplateColumns = '56px 0px 1fr 4px 40%';
-      activePanelName = null;
+      closeSidePanel();
     } else {
       // Switch panel
       document.querySelectorAll('.sidebar-btn[data-panel]').forEach(b => b.classList.remove('active'));
@@ -627,7 +745,65 @@ function setupResize(handleId: string, axis: 'col' | 'row', onDelta: (delta: num
   });
 }
 
-// -- Terminal output helper --
+// -- Exception inline display --
+let exceptionDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
+let exceptionZoneId: string | null = null;
+
+function clearException() {
+  if (exceptionDecorations) { exceptionDecorations.clear(); exceptionDecorations = null; }
+  if (exceptionZoneId) {
+    const zoneId = exceptionZoneId;
+    editor.changeViewZones(a => a.removeZone(zoneId));
+    exceptionZoneId = null;
+  }
+}
+
+function showExceptionDialog(msg: string) {
+  clearException();
+
+  // Parse line number from traceback: File "<stdin>", line NN
+  const lineMatch = msg.match(/File "<stdin>", line (\d+)/);
+  const lineNo = lineMatch ? parseInt(lineMatch[1], 10) : null;
+
+  // Extract the error message (e.g. "RuntimeError: Sensor control failed.")
+  const errorLine = msg.split('\n').find(l => /Error:|Exception:/.test(l)) || msg;
+
+  if (!lineNo) return; // Can't show inline without a line number
+
+  // Highlight the error line in the gutter + background
+  exceptionDecorations = editor.createDecorationsCollection([
+    {
+      range: new monaco.Range(lineNo, 1, lineNo, 1),
+      options: {
+        isWholeLine: true,
+        className: 'exception-line',
+        glyphMarginClassName: 'exception-glyph',
+      },
+    },
+  ]);
+
+  // Insert a view zone below the error line to show the message
+  editor.changeViewZones(accessor => {
+    const domNode = document.createElement('div');
+    domNode.className = 'exception-zone';
+    domNode.textContent = errorLine.trim();
+    exceptionZoneId = accessor.addZone({
+      afterLineNumber: lineNo,
+      heightInLines: 1.4,
+      domNode,
+    });
+  });
+
+  // Scroll to the error line
+  editor.revealLineInCenter(lineNo);
+
+  // Clear on next edit
+  const disposable = editor.onDidChangeModelContent(() => {
+    clearException();
+    disposable.dispose();
+  });
+}
+
 function termLog(text: string, cls: string = '') {
   const el = document.getElementById('terminal-output');
   if (!el) return;
@@ -647,6 +823,8 @@ document.getElementById('btn-clear-term')?.addEventListener('click', () => {
 // -- Connection and script state --
 let isConnected = false;
 let scriptRunning = false;
+let connectedBoard: string | null = null;
+let connectedSensor: string | null = null;
 
 const btnRunStop = document.getElementById('btn-run-stop')!;
 const iconPlay = btnRunStop.querySelector('.icon-play') as SVGElement;
@@ -683,15 +861,24 @@ async function doConnect() {
     const ports = await invoke<string[]>('cmd_list_ports');
     if (ports.length === 0) return;
 
-    const resp = await invoke<any>('cmd_connect', { port: ports[0] });
-    const info = resp.data;
-    setConnected(true, `${info.board} | ${info.port} | v${info.firmware}`);
+    await invoke('cmd_connect', { port: ports[0] });
+
+    // Query board info from cached sysinfo
+    const sysinfo = await invoke<any>('cmd_get_sysinfo');
+    const version = await invoke<any>('cmd_get_version');
+    const fw = version?.data ? `${version.data.firmware[0]}.${version.data.firmware[1]}.${version.data.firmware[2]}` : '?';
+    connectedBoard = sysinfo.board_type;
+    connectedSensor = null; // TODO: sensor from chip_id
+    setConnected(true, `${sysinfo.board_name} | ${ports[0]} | v${fw}`);
 
     // Stop any running script from a previous session
     try { await invoke('cmd_stop_script'); } catch (_) {}
     // Enable streaming and start polling
     try { await invoke('cmd_enable_streaming', { enable: true }); } catch (_) {}
     startPolling();
+    // Load examples (filtered by board/sensor if enabled)
+    examplesLoaded = false;
+    loadExamples();
   } catch (e: any) {
     console.error('Connect failed:', e);
   }
@@ -703,7 +890,17 @@ async function doDisconnect() {
   try { await invoke('cmd_stop_script'); } catch (_) {}
   try { await invoke('cmd_enable_streaming', { enable: false }); } catch (_) {}
   try { await invoke('cmd_disconnect'); } catch (_) {}
+  connectedBoard = null;
+  connectedSensor = null;
   setConnected(false);
+  // Reload examples unfiltered, or clear if filtering is on
+  examplesLoaded = false;
+  if (filterExamples) {
+    const exTree = document.getElementById('examples-tree');
+    if (exTree) exTree.innerHTML = '<div style="padding:8px;color:var(--text-muted)">Connect to load examples</div>';
+  } else {
+    loadExamples();
+  }
 }
 
 async function toggleConnect() {
@@ -725,7 +922,6 @@ async function stopScript() {
   if (!isConnected) return;
   try {
     await invoke('cmd_stop_script');
-    setScriptRunning(false);
   } catch (e: any) {
     console.error('Stop failed:', e);
   }
@@ -752,7 +948,7 @@ const statusFps = document.getElementById('status-fps')!;
 
 function startPolling() {
   stopPolling();
-  pollTimer = window.setInterval(doPoll, 50);
+  pollTimer = window.setInterval(doPoll, pollIntervalMs);
 }
 
 function stopPolling() {
@@ -770,16 +966,34 @@ async function doPoll() {
     const buf = new DataView(raw);
     let pos = 0;
 
+    // Parse script_running flag
+    const running = buf.getUint8(pos) !== 0; pos += 1;
+    if (scriptRunning !== running) {
+      setScriptRunning(running);
+    }
+
     // Parse stdout: [len:u32 LE] [bytes]
     const stdoutLen = buf.getUint32(pos, true); pos += 4;
+    let hasException = false;
+    const errorLines: string[] = [];
     if (stdoutLen > 0) {
       const stdoutBytes = new Uint8Array(raw, pos, stdoutLen);
       const text = new TextDecoder().decode(stdoutBytes);
       for (const line of text.split('\n')) {
-        if (line.length > 0) termLog(line, 'fps-line');
+        if (line.length > 0) {
+          const isError = /^(Traceback|  File |.*Error:|.*Exception:|.*Interrupt:|MPY:)/.test(line);
+          termLog(line, isError ? 'error-line' : 'fps-line');
+          if (isError) { hasException = true; errorLines.push(line); }
+        }
       }
     }
     pos += stdoutLen;
+
+    // Show error dialog (ignore KeyboardInterrupt -- that's just script stop)
+    const allErrors = errorLines.join('\n');
+    if (hasException && !/KeyboardInterrupt/.test(allErrors)) {
+      showExceptionDialog(errorLines.join('\n'));
+    }
 
     // Parse frame: [width:u32] [height:u32] ...
     if (pos + 8 > buf.byteLength) return;
@@ -950,6 +1164,8 @@ document.addEventListener('keydown', (e) => {
 
 // -- UI Scaling --
 let uiScale = 1.2;
+let pollIntervalMs = 50;
+let filterExamples = true;
 
 function setUIScale(scale: number) {
   uiScale = Math.max(0.5, Math.min(2.0, scale));
@@ -1010,6 +1226,10 @@ function openSettings() {
             <label class="radio-opt"><input type="radio" name="theme" value="dark" ${currentThemeSetting === 'dark' ? 'checked' : ''}> Dark</label>
             <label class="radio-opt"><input type="radio" name="theme" value="system" ${currentThemeSetting === 'system' ? 'checked' : ''}> System</label>
           </div>
+        </div>
+        <div class="pref-row">
+          <span class="pref-label">Filter Examples:</span>
+          <label class="switch"><input type="checkbox" id="set-filter-examples" ${filterExamples ? 'checked' : ''}><span class="switch-slider"></span></label>
         </div>
         <div class="pref-row">
           <span class="pref-label"></span>
@@ -1134,6 +1354,19 @@ function openSettings() {
   };
   document.getElementById('set-line-numbers')!.onchange = (e) => {
     editor.updateOptions({ lineNumbers: (e.target as HTMLInputElement).checked ? 'on' : 'off' });
+  };
+  document.getElementById('set-filter-examples')!.onchange = (e) => {
+    filterExamples = (e.target as HTMLInputElement).checked;
+    examplesLoaded = false;
+    if (!filterExamples) {
+      loadExamples();
+    } else if (isConnected) {
+      loadExamples();
+    } else {
+      const exTree = document.getElementById('examples-tree');
+      if (exTree) exTree.innerHTML = '<div style="padding:8px;color:var(--text-muted)">Connect to load examples</div>';
+    }
+    scheduleSaveSettings();
   };
   // Theme radios
   overlay.querySelectorAll('input[name="theme"]').forEach(radio => {

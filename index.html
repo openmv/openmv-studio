@@ -10,7 +10,7 @@
   <div class="ide-layout">
     <!-- SIDEBAR -->
     <div class="sidebar">
-      <button class="sidebar-btn active" data-panel="files" title="Files">
+      <button class="sidebar-btn" data-panel="files" title="Files">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
         <span>Files</span>
       </button>
@@ -65,52 +65,11 @@
           </div>
         </div>
 
-        <!-- Examples panel -->
+        <!-- Examples panel (populated dynamically) -->
         <div class="side-panel-content" data-panel="examples" style="display:none">
           <div class="side-panel-header">Examples</div>
-          <div class="file-tree">
-            <div class="tree-section">
-              <div class="tree-section-header">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                Basics
-              </div>
-              <div class="tree-item indent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                <span>helloworld.py</span>
-              </div>
-              <div class="tree-item indent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                <span>face_detection.py</span>
-              </div>
-              <div class="tree-item indent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                <span>color_tracking.py</span>
-              </div>
-            </div>
-            <div class="tree-section">
-              <div class="tree-section-header">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                Machine Learning
-              </div>
-              <div class="tree-item indent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                <span>person_detection.py</span>
-              </div>
-              <div class="tree-item indent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                <span>image_classification.py</span>
-              </div>
-            </div>
-            <div class="tree-section">
-              <div class="tree-section-header">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                AprilTags
-              </div>
-              <div class="tree-item indent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                <span>find_apriltags.py</span>
-              </div>
-            </div>
+          <div class="file-tree" id="examples-tree">
+            <div style="padding:8px;color:var(--text-muted)">Connect to load examples</div>
           </div>
         </div>
 
@@ -150,6 +109,8 @@
 
     <!-- MAIN AREA -->
     <div class="main-area">
+      <!-- Welcome screen (replaces tab bar + editor when no files open) -->
+      <div class="welcome-screen" id="welcome-screen" style="display:none"></div>
       <!-- Tab bar + Editor + Terminal -->
       <div class="tab-bar" id="tab-bar"></div>
       <div class="editor-area">
@@ -168,8 +129,6 @@
           </div>
         </div>
         <div class="terminal-content" id="terminal-output">
-          <div class="info-line">OpenMV IDE v0.1.0</div>
-          <div class="info-line">Ready.</div>
         </div>
       </div>
     </div>

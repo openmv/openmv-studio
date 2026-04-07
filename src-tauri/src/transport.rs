@@ -4,8 +4,34 @@
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
-use crate::protocol::constants::*;
-use crate::protocol::crc::{crc16, crc32};
+use crc::{Algorithm, Crc, Table};
+
+use crate::protocol::*;
+
+const OPENMV_CRC16: Algorithm<u16> = Algorithm {
+    width: 16,
+    poly: 0xF94F,
+    init: 0xFFFF,
+    refin: false,
+    refout: false,
+    xorout: 0x0000,
+    check: 0x0000,
+    residue: 0x0000,
+};
+
+const OPENMV_CRC32: Algorithm<u32> = Algorithm {
+    width: 32,
+    poly: 0xFA567D89,
+    init: 0xFFFFFFFF,
+    refin: false,
+    refout: false,
+    xorout: 0x00000000,
+    check: 0x00000000,
+    residue: 0x00000000,
+};
+
+const CRC16: Crc<u16, Table<16>> = Crc::<u16, Table<16>>::new(&OPENMV_CRC16);
+const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&OPENMV_CRC32);
 
 #[derive(Debug)]
 pub enum ProtocolError {
@@ -108,27 +134,19 @@ impl Transport {
     }
 
     fn calc_crc16(&self, data: &[u8]) -> u16 {
-        if self.crc_enabled {
-            crc16(data)
-        } else {
-            0
-        }
+        if self.crc_enabled { CRC16.checksum(data) } else { 0 }
     }
 
     fn calc_crc32(&self, data: &[u8]) -> u32 {
-        if self.crc_enabled {
-            crc32(data)
-        } else {
-            0
-        }
+        if self.crc_enabled { CRC32.checksum(data) } else { 0 }
     }
 
     fn check_crc16(&self, crc: u16, data: &[u8]) -> bool {
-        !self.crc_enabled || crc == crc16(data)
+        !self.crc_enabled || crc == CRC16.checksum(data)
     }
 
     fn check_crc32(&self, crc: u32, data: &[u8]) -> bool {
-        !self.crc_enabled || crc == crc32(data)
+        !self.crc_enabled || crc == CRC32.checksum(data)
     }
 
     fn check_seq(&self, seq: u8, opcode: u8, flags: PacketFlags) -> bool {
@@ -252,9 +270,14 @@ impl Transport {
             // Advance sequence
             self.sequence = self.sequence.wrapping_add(1);
 
-            // Collect fragments -- reset deadline per fragment
+            // Collect fragments -- reset deadline per fragment, cap at 10MB
             if packet.flags.contains(PacketFlags::FRAGMENT) {
                 if let Some(ref p) = packet.payload {
+                    if fragments.len() + p.len() > 10 * 1024 * 1024 {
+                        log::warn!("Fragment overflow (>10MB), dropping");
+                        fragments.clear();
+                        continue;
+                    }
                     fragments.extend_from_slice(p);
                 }
                 deadline = Instant::now() + self.timeout;
@@ -267,10 +290,9 @@ impl Transport {
                     if p.len() >= 2 {
                         let status_val = u16::from_le_bytes([p[0], p[1]]);
                         let status = Status::from_u16(status_val).unwrap_or(Status::Unknown);
-                        if status == Status::Busy {
-                            return Err(ProtocolError::Nak(Status::Busy));
-                        }
                         return match status {
+                            Status::Busy => Err(ProtocolError::Nak(Status::Busy)),
+                            Status::Failed => Err(ProtocolError::Nak(Status::Failed)),
                             Status::Checksum => Err(ProtocolError::Checksum),
                             Status::Sequence => Err(ProtocolError::Sequence),
                             Status::Timeout => Err(ProtocolError::Timeout),

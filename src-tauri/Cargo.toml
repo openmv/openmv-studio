@@ -1,17 +1,15 @@
 [package]
-name = "app"
+name = "openmv-ide"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
-edition = "2021"
-rust-version = "1.77.2"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "OpenMV IDE - Machine Vision Made Simple"
+authors = ["OpenMV, LLC"]
+license = "MIT"
+repository = "https://github.com/openmv/openmv"
+edition = "2024"
+rust-version = "1.85.0"
 
 [lib]
-name = "app_lib"
+name = "openmv_ide_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -28,3 +26,4 @@ bitflags = "2.6"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-fs = "2"
+crc = "3.4"

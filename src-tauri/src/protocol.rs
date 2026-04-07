@@ -131,9 +131,46 @@ pub mod ioctl {
     pub const PROFILE_RESET: u32 = 0x02;
 }
 
-// Known USB VID/PID pairs for OpenMV cameras
-pub const OPENMV_VID_PID: &[(u16, Option<u16>)] = &[
-    (0x1209, Some(0xABD1)), // OpenMV original
-    (0x37C5, None),         // OpenMV new VID (any PID)
-    (0x2341, None),         // Arduino (any PID)
-];
+// Pixel format constants
+pub const PIXFORMAT_JPEG: u32 = 0x06060000;
+pub const PIXFORMAT_RGB565: u32 = 0x0C030002;
+pub const PIXFORMAT_GRAYSCALE: u32 = 0x08020001;
+
+// Protocol-level response structs
+
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemInfo {
+    pub cpu_id: u32,
+    pub usb_vid: u16,
+    pub usb_pid: u16,
+    pub flash_size_kb: u32,
+    pub ram_size_kb: u32,
+    pub npu_present: bool,
+    pub pmu_present: bool,
+    pub pmu_eventcnt: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionInfo {
+    pub protocol: [u8; 3],
+    pub bootloader: [u8; 3],
+    pub firmware: [u8; 3],
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FrameInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format_str: String,
+    pub data: Vec<u8>,
+    pub is_jpeg: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PollResult {
+    pub stdout: Option<String>,
+    pub frame: Option<FrameInfo>,
+    pub script_running: bool,
+}

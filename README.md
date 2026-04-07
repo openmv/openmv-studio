@@ -87,48 +87,70 @@ serializing large frame data as JSON arrays. Format:
 
 If no frame: width=0, height=0.
 
-## Current Status (Phase 1)
+## Current Status
 
-### Working
-- [x] Connect/disconnect to OpenMV cameras (USB serial, auto-detect by VID/PID)
-- [x] Run/stop Python scripts on camera
-- [x] Serial terminal (stdout from camera)
-- [x] Framebuffer viewer (JPEG and RGB565 formats)
-- [x] Protocol V2: sync, caps negotiation, channels, fragmentation, ACK/NAK
-- [x] I/O thread with command/response queues
+### Phase 1 -- Done
+- [x] Connect/disconnect (USB serial, VID/PID auto-detect)
+- [x] Run/stop scripts (single toggle button, Cmd+R / Ctrl+E)
+- [x] Serial terminal (stdout polling)
+- [x] Framebuffer viewer (JPEG + RGB565, binary IPC)
+- [x] Protocol V2 in Rust (transport state machine, CRC, channels, fragmentation)
+- [x] I/O thread with mpsc command/response queues
 - [x] Auto-resync on protocol errors
-- [x] Monaco editor with Python syntax highlighting + dark theme
-- [x] Resizable panels (editor/terminal, main/right panel, FB/histogram)
-- [x] Sidebar panels (Files, Examples, Docs, Settings -- mockups)
-- [x] Keyboard shortcuts (Cmd+R run/stop, Cmd+=/- zoom, F5/F6)
-- [x] Status bar (connection state, cursor position, FPS)
-- [x] Histogram UI (mockup, not wired to data yet)
+- [x] Monaco editor with Python highlighting
+- [x] Resizable panels with magnetic snap (terminal/tools alignment)
 
-### Known Issues
-- Protocol loses sync occasionally when frame content changes rapidly
-  (timeouts on frame read, causes resync which freezes briefly)
-- Frame data sent as Vec<u8> in JSON for non-poll commands (slow);
-  cmd_poll uses binary IPC which is fast
-- No file management yet (open/save/new)
-- Side panels are mockups only (not functional)
-- Menus not implemented (should use Tauri native menu API for macOS)
-- No high-DPI scaling option yet
+### Phase 2 -- Done
+- [x] File management (new, open, save, save-as, close, tabs)
+- [x] Settings persistence (tauri-plugin-store, saves to settings.json)
+- [x] Dark + Light themes with System option
+- [x] macOS native menu bar (File, Edit, Tools, Device, View, Help)
+- [x] macOS-style settings dialog (General, Editor, Connection, FB, Shortcuts tabs)
+- [x] Configurable keyboard shortcuts with rebinding UI
+- [x] UI scaling slider (50-200%) with zoom compensation
+- [x] Welcome screen when no files open
+- [x] Reopen files on startup from saved settings
+- [x] Panel sizes persisted (grid layout, FB/tools ratio)
+- [x] Tabbed tools panel (Histogram, Controls, Performance, Stats mockups)
+- [x] Sidebar panels (Files, Examples, Docs mockups)
+- [x] Connect stops running script, disconnect cleans up properly
+- [x] Run button disabled when not connected
+- [x] Right-click context menu disabled
+- [x] NAK FAILED handled as short read in transport
+- [x] Fragment overflow cap at 10MB
+- [x] Poll interval configurable (default 50ms)
 
-### Phase 2 (Next)
-- [ ] File management (new, open, save, save-as via Tauri file dialogs)
+### Known Issues / Pending
+- Protocol can lose sync during rapid frame changes (causes brief resync freeze)
+- NAK FAILED returns partial data -- currently treated as error, could return
+  the payload for channel reads specifically (trade-off: transport layer doesn't
+  know what command was issued)
+- Windows: serial port may need keep-alive writes (10ms null byte) to prevent
+  read stalls -- not implemented yet, macOS/Linux unaffected
+- Histogram/Controls/Performance/Stats tabs are mockups (not wired to data)
+- Side panels (Files, Examples, Docs) are mockups
+- No file watcher (external edits not detected)
+- No "save before close?" dialog (uses confirm() placeholder)
+
+### Phase 3 -- Next
 - [ ] Wire histogram to actual frame data
-- [ ] Native macOS/Windows menu bar via Tauri Menu API
+- [ ] Wire camera controls to camera attributes
+- [ ] Wire performance/stats tabs to real data
 - [ ] Actual file tree (camera storage + local files)
 - [ ] Actual examples browser (load from scripts/examples/)
+- [ ] ROI selection on framebuffer
+- [ ] File watcher for external changes
 
-### Phase 3+
+### Phase 4+
 - [ ] Firmware update (DFU, IMX, Alif bootloaders)
 - [ ] ROMFS editor
 - [ ] Machine vision tools (threshold editor, AprilTag generator)
 - [ ] Model zoo + Edge Impulse integration
-- [ ] Profiler
+- [ ] Profiler (PMU data display)
 - [ ] Dataset editor
 - [ ] Video recording
+- [ ] WiFi/TCP transport (for iPad support)
+- [ ] iOS/iPad build
 
 ## Development
 
@@ -151,10 +173,13 @@ rm -rf dist                  # Vite frontend output
 
 ## Dependencies
 
-- **Rust** (brew install rust) -- backend
-- **Node.js + npm** -- frontend build tool (Vite) and Monaco editor
-- **Tauri CLI** (cargo install tauri-cli) -- app bundler
-- **serialport** (Rust crate) -- USB serial communication
-- **bitflags** (Rust crate) -- protocol flag types
-- **monaco-editor** (npm) -- code editor
-- **@tauri-apps/api** (npm) -- frontend-to-backend IPC
+**System:**
+- Rust (brew install rust)
+- Node.js + npm (for Vite and frontend packages)
+- Tauri CLI (cargo install tauri-cli)
+
+**Rust crates:** serialport, bitflags, serde, tauri, tauri-plugin-dialog,
+tauri-plugin-store, tauri-plugin-fs, tauri-plugin-log
+
+**npm packages:** monaco-editor, @tauri-apps/api, @tauri-apps/plugin-dialog,
+@tauri-apps/plugin-store, vite

@@ -1,107 +1,424 @@
+mod camera;
 mod protocol;
+mod transport;
 
 use std::sync::Mutex;
 use tauri::ipc;
 use tauri::menu::{MenuBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 
-use protocol::camera::{list_ports, Camera, Command, Response};
+use camera::Camera;
 
 struct AppState {
     camera: Camera,
 }
 
-#[tauri::command]
-fn cmd_list_ports() -> Vec<String> {
-    list_ports()
-}
-
-#[tauri::command]
-fn cmd_connect(port: String, state: State<Mutex<AppState>>) -> Result<Response, String> {
-    let mut st = state.lock().map_err(|e| e.to_string())?;
-    let resp = st.camera.execute(Command::Connect {
-        port,
-        baudrate: 921600,
-    });
-    match &resp {
-        Response::Error(e) => Err(e.clone()),
-        _ => Ok(resp),
+fn load_known_vid_pids(app: &tauri::AppHandle) -> Vec<(u16, u16)> {
+    let res_dir = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.join("resources").join("boards.json"));
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("resources")
+        .join("boards.json");
+    let path = match res_dir {
+        Some(ref p) if p.exists() => p.clone(),
+        _ => dev_path,
+    };
+    let mut pairs = Vec::new();
+    if let Ok(data) = std::fs::read_to_string(&path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&data)
+        && let Some(boards) = json["boards"].as_array()
+    {
+        for b in boards {
+            if let (Some(vs), Some(ps)) = (b["vid"].as_str(), b["pid"].as_str()) {
+                let vid = u16::from_str_radix(vs.trim_start_matches("0x"), 16).unwrap_or(0);
+                let pid = u16::from_str_radix(ps.trim_start_matches("0x"), 16).unwrap_or(0);
+                if vid != 0 {
+                    pairs.push((vid, pid));
+                }
+            }
+        }
     }
+    pairs
 }
 
 #[tauri::command]
-fn cmd_disconnect(state: State<Mutex<AppState>>) -> Result<Response, String> {
-    let mut st = state.lock().map_err(|e| e.to_string())?;
-    Ok(st.camera.execute(Command::Disconnect))
+fn cmd_list_ports(app: tauri::AppHandle) -> Vec<String> {
+    let known = load_known_vid_pids(&app);
+    serialport::available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| {
+            if let serialport::SerialPortType::UsbPort(info) = &p.port_type {
+                known
+                    .iter()
+                    .any(|(vid, pid)| info.vid == *vid && info.pid == *pid)
+            } else {
+                false
+            }
+        })
+        .map(|p| p.port_name)
+        .collect()
 }
 
 #[tauri::command]
-fn cmd_run_script(script: String, state: State<Mutex<AppState>>) -> Result<Response, String> {
+fn cmd_connect(port: String, state: State<Mutex<AppState>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    let resp = st.camera.execute(Command::RunScript(script));
-    match &resp {
-        Response::Error(e) => Err(e.clone()),
-        _ => Ok(resp),
+    st.camera.connect(&port, 921600).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_disconnect(state: State<Mutex<AppState>>) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    st.camera.disconnect();
+    Ok(())
+}
+
+#[tauri::command]
+fn cmd_get_version(state: State<Mutex<AppState>>) -> Result<serde_json::Value, String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    let v = st.camera.verinfo.as_ref().ok_or("Not connected")?;
+    Ok(serde_json::json!({
+        "protocol": v.protocol,
+        "bootloader": v.bootloader,
+        "firmware": v.firmware,
+    }))
+}
+
+#[tauri::command]
+fn cmd_get_sysinfo(
+    app: tauri::AppHandle,
+    state: State<Mutex<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    let info = st.camera.sysinfo.as_ref().ok_or("Not connected")?;
+    let (board_type, board_name) = lookup_board(&app, info.usb_vid, info.usb_pid);
+    Ok(serde_json::json!({
+        "cpu_id": info.cpu_id,
+        "usb_vid": info.usb_vid,
+        "usb_pid": info.usb_pid,
+        "board_type": board_type,
+        "board_name": board_name,
+        "flash_size_kb": info.flash_size_kb,
+        "ram_size_kb": info.ram_size_kb,
+        "npu_present": info.npu_present,
+        "pmu_present": info.pmu_present,
+    }))
+}
+
+fn lookup_board(app: &tauri::AppHandle, vid: u16, pid: u16) -> (String, String) {
+    let res_dir = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.join("resources").join("boards.json"));
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("resources")
+        .join("boards.json");
+    let path = match res_dir {
+        Some(ref p) if p.exists() => p.clone(),
+        _ => dev_path,
+    };
+    let vid_str = format!("0x{:04X}", vid);
+    let pid_str = format!("0x{:04X}", pid);
+    if let Ok(data) = std::fs::read_to_string(&path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&data)
+        && let Some(boards) = json["boards"].as_array()
+    {
+        for b in boards {
+            if b["vid"].as_str() == Some(&vid_str) && b["pid"].as_str() == Some(&pid_str) {
+                return (
+                    b["type"].as_str().unwrap_or("Unknown").to_string(),
+                    b["display"].as_str().unwrap_or("Unknown").to_string(),
+                );
+            }
+        }
     }
+    (
+        format!("{:04X}:{:04X}", vid, pid),
+        "Unknown Board".to_string(),
+    )
 }
 
 #[tauri::command]
-fn cmd_stop_script(state: State<Mutex<AppState>>) -> Result<Response, String> {
+fn cmd_run_script(script: String, state: State<Mutex<AppState>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    let resp = st.camera.execute(Command::StopScript);
-    match &resp {
-        Response::Error(e) => Err(e.clone()),
-        _ => Ok(resp),
-    }
+    st.camera.exec_script(&script).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn cmd_read_stdout(state: State<Mutex<AppState>>) -> Result<Response, String> {
+fn cmd_stop_script(state: State<Mutex<AppState>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    Ok(st.camera.execute(Command::ReadStdout))
+    st.camera.stop_script().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn cmd_enable_streaming(enable: bool, state: State<Mutex<AppState>>) -> Result<Response, String> {
+fn cmd_enable_streaming(enable: bool, state: State<Mutex<AppState>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    let resp = st.camera.execute(Command::EnableStreaming(enable));
-    match &resp {
-        Response::Error(e) => Err(e.clone()),
-        _ => Ok(resp),
-    }
+    st.camera
+        .enable_streaming(enable)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn cmd_poll(state: State<Mutex<AppState>>) -> Result<ipc::Response, String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    let resp = st.camera.execute(Command::Poll);
+    let result = st.camera.poll();
 
-    match resp {
-        Response::PollResult { stdout, frame } => {
-            let stdout_bytes = stdout.unwrap_or_default().into_bytes();
-            let mut buf = Vec::with_capacity(stdout_bytes.len() + 256);
+    let stdout_bytes = result.stdout.unwrap_or_default().into_bytes();
+    let mut buf = Vec::with_capacity(stdout_bytes.len() + 256);
 
-            buf.extend_from_slice(&(stdout_bytes.len() as u32).to_le_bytes());
-            buf.extend_from_slice(&stdout_bytes);
+    // Script running flag
+    buf.push(result.script_running as u8);
 
-            if let Some(f) = frame {
-                buf.extend_from_slice(&f.width.to_le_bytes());
-                buf.extend_from_slice(&f.height.to_le_bytes());
-                let fmt = f.format_str.as_bytes();
-                buf.push(fmt.len() as u8);
-                buf.extend_from_slice(fmt);
-                buf.push(f.is_jpeg as u8);
-                buf.extend_from_slice(&f.data);
-            } else {
-                buf.extend_from_slice(&0u32.to_le_bytes());
-                buf.extend_from_slice(&0u32.to_le_bytes());
-            }
+    buf.extend_from_slice(&(stdout_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&stdout_bytes);
 
-            Ok(ipc::Response::new(buf))
-        }
-        Response::Error(e) => Err(e),
-        _ => Err("Unexpected response".into()),
+    if let Some(f) = result.frame {
+        buf.extend_from_slice(&f.width.to_le_bytes());
+        buf.extend_from_slice(&f.height.to_le_bytes());
+        let fmt = f.format_str.as_bytes();
+        buf.push(fmt.len() as u8);
+        buf.extend_from_slice(fmt);
+        buf.push(f.is_jpeg as u8);
+        buf.extend_from_slice(&f.data);
+    } else {
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
     }
+
+    Ok(ipc::Response::new(buf))
+}
+
+#[tauri::command]
+fn cmd_list_examples(
+    app: tauri::AppHandle,
+    board: Option<String>,
+    sensor: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let res_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join("resources")
+        .join("examples");
+
+    // Fallback for dev mode
+    let examples_dir = if res_dir.exists() {
+        res_dir
+    } else {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("resources")
+            .join("examples")
+    };
+
+    if !examples_dir.exists() {
+        return Err(format!("Examples not found: {:?}", examples_dir));
+    }
+
+    // Load index.json for filtering and flatten info
+    let index_path = examples_dir.join("index.json");
+    let index_data = std::fs::read_to_string(&index_path).ok();
+    let index: Option<serde_json::Value> = index_data
+        .as_deref()
+        .and_then(|d| serde_json::from_str(d).ok());
+
+    let allowed_paths: Option<Vec<String>> = if board.is_some() || sensor.is_some() {
+        index.as_ref().and_then(|idx| {
+            let entries = idx["entries"].as_array();
+            Some(filter_entries(entries, board.as_deref(), sensor.as_deref(), &examples_dir))
+        })
+    } else {
+        None // no filter -- show all
+    };
+
+    // Collect flatten prefixes from "path" entries ending with /*
+    // e.g. "50-OpenMV-Boards/50-STM32-Boards/*" -> "50-OpenMV-Boards/50-STM32-Boards"
+    let flatten_dirs: Vec<String> = index
+        .as_ref()
+        .and_then(|idx| idx["entries"].as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|e| e["path"].as_str())
+                .filter_map(|p| p.strip_suffix("/*"))
+                .map(|p| p.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Scan directory tree recursively, filtering by allowed paths
+    fn scan(
+        dir: &std::path::Path,
+        base: &std::path::Path,
+        allowed: &Option<Vec<String>>,
+        flatten_dirs: &[String],
+    ) -> Vec<serde_json::Value> {
+        let mut items = Vec::new();
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return items;
+        };
+        let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "index.json" {
+                continue;
+            }
+            if path.is_dir() {
+                let rel = path.strip_prefix(base).unwrap_or(&path);
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+                // Check if this dir is a flatten target -- hoist its children
+                if flatten_dirs.iter().any(|f| f == &rel_str) {
+                    let children = scan(&path, base, allowed, flatten_dirs);
+                    items.extend(children);
+                } else {
+                    // Check if this dir is an ancestor of a flatten target
+                    // If so, scan into it but don't create a tree node -- inline results
+                    let is_ancestor = flatten_dirs.iter().any(|f| f.starts_with(&format!("{}/", rel_str)));
+                    if is_ancestor {
+                        let children = scan(&path, base, allowed, flatten_dirs);
+                        items.extend(children);
+                    } else {
+                        let children = scan(&path, base, allowed, flatten_dirs);
+                        if !children.is_empty() {
+                            let display = name
+                                .trim_start_matches(|c: char| c.is_ascii_digit() || c == '-')
+                                .replace('-', " ");
+                            items.push(serde_json::json!({
+                                "name": if display.is_empty() { name.clone() } else { display },
+                                "type": "dir",
+                                "children": children,
+                            }));
+                        }
+                    }
+                }
+            } else if name.ends_with(".py") {
+                // Check if this file is allowed by the filter
+                if let Some(allowed_list) = allowed {
+                    let rel = path.strip_prefix(base).unwrap_or(&path);
+                    let rel_str = rel.to_string_lossy();
+                    if !allowed_list.iter().any(|a| rel_str.starts_with(a)) {
+                        continue;
+                    }
+                }
+                items.push(serde_json::json!({
+                    "name": name.trim_end_matches(".py").replace('_', " "),
+                    "type": "file",
+                    "path": path.to_string_lossy(),
+                }));
+            }
+        }
+        items.sort_by(|a, b| {
+            let na = a["name"].as_str().unwrap_or("");
+            let nb = b["name"].as_str().unwrap_or("");
+            na.to_ascii_lowercase().cmp(&nb.to_ascii_lowercase())
+        });
+        items
+    }
+
+    Ok(serde_json::Value::Array(scan(
+        &examples_dir,
+        &examples_dir,
+        &allowed_paths,
+        &flatten_dirs,
+    )))
+}
+
+/// Filter index.json entries by board and sensor, return list of allowed paths.
+/// Paths ending with /* are expanded to each subdirectory.
+fn filter_entries(
+    entries: Option<&Vec<serde_json::Value>>,
+    board: Option<&str>,
+    sensor: Option<&str>,
+    examples_dir: &std::path::Path,
+) -> Vec<String> {
+    let Some(entries) = entries else {
+        return vec![];
+    };
+    let mut allowed = Vec::new();
+
+    for entry in entries {
+        let Some(path) = entry["path"].as_str() else {
+            continue;
+        };
+
+        // Check board filter
+        if let Some(board) = board {
+            let boards = entry["boards"].as_array();
+            let exclude = entry["exclude_boards"].as_array();
+
+            let board_ok = match boards {
+                Some(list) => list
+                    .iter()
+                    .any(|b| b.as_str() == Some("*") || b.as_str() == Some(board)),
+                None => true,
+            };
+
+            let excluded = match exclude {
+                Some(list) => list.iter().any(|b| b.as_str() == Some(board)),
+                None => false,
+            };
+
+            if !board_ok || excluded {
+                continue;
+            }
+        }
+
+        // Check sensor filter
+        if let Some(sensor) = sensor {
+            let sensors = entry["sensors"].as_array();
+            let exclude = entry["exclude_sensors"].as_array();
+
+            let sensor_ok = match sensors {
+                Some(list) => list
+                    .iter()
+                    .any(|s| s.as_str() == Some("*") || s.as_str() == Some(sensor)),
+                None => true,
+            };
+
+            let excluded = match exclude {
+                Some(list) => list.iter().any(|s| s.as_str() == Some(sensor)),
+                None => false,
+            };
+
+            if !sensor_ok || excluded {
+                continue;
+            }
+        }
+
+        // Expand glob: "some/path/*" -> each subdirectory under some/path/
+        if let Some(prefix) = path.strip_suffix("/*") {
+            let dir = examples_dir.join(prefix);
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for child in rd.filter_map(|e| e.ok()) {
+                    if child.path().is_dir() {
+                        let child_path = format!(
+                            "{}/{}",
+                            prefix,
+                            child.file_name().to_string_lossy()
+                        );
+                        allowed.push(child_path);
+                    }
+                }
+            }
+        } else {
+            allowed.push(path.to_string());
+        }
+    }
+
+    allowed
 }
 
 #[tauri::command]
@@ -221,11 +538,13 @@ pub fn run() {
             cmd_list_ports,
             cmd_connect,
             cmd_disconnect,
+            cmd_get_version,
+            cmd_get_sysinfo,
             cmd_run_script,
             cmd_stop_script,
-            cmd_read_stdout,
             cmd_enable_streaming,
             cmd_poll,
+            cmd_list_examples,
             cmd_read_file,
             cmd_write_file,
         ])

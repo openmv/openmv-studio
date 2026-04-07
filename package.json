@@ -4,9 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "dev": "[ -d node_modules ] || npm install && vite",
+    "start": "[ -d node_modules ] || npm install && cargo tauri dev",
+    "build": "[ -d node_modules ] || npm install && vite build",
+    "release": "cargo tauri build",
+    "check": "tsc --noEmit && cd src-tauri && cargo check",
+    "clean": "rm -rf dist node_modules src-tauri/target package-lock.json",
+    "help": "echo '\nnpm run start   - dev mode (hot-reload)\nnpm run build   - build distributable (DMG/MSI/AppImage)\nnpm run check   - type-check TS + Rust without building\nnpm run clean   - deep clean (node_modules, dist, target)\n\nAfter clean:    npm install && npm run start\n'"
   },
   "devDependencies": {
     "typescript": "~5.9.3",
