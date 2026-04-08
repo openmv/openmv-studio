@@ -34,6 +34,7 @@ pub enum Opcode {
     SysBoot = 0x11,
     SysInfo = 0x12,
     SysEvent = 0x13,
+    SysMemory = 0x14,
     // Channel
     ChannelList = 0x20,
     ChannelPoll = 0x21,
@@ -59,6 +60,7 @@ impl Opcode {
             0x11 => Some(Self::SysBoot),
             0x12 => Some(Self::SysInfo),
             0x13 => Some(Self::SysEvent),
+            0x14 => Some(Self::SysMemory),
             0x20 => Some(Self::ChannelList),
             0x21 => Some(Self::ChannelPoll),
             0x22 => Some(Self::ChannelLock),
@@ -170,7 +172,17 @@ pub struct FrameInfo {
     pub is_jpeg: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+pub struct MemEntry {
+    pub mem_type: String,
+    pub index: u8,
+    pub total: u32,
+    pub used: u32,
+    pub free: u32,
+    pub persist: u32,
+    pub peak: u32,
+}
+
 pub struct PollResult {
     pub stdout: Option<String>,
     pub frame: Option<FrameInfo>,

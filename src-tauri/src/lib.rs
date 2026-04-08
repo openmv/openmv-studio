@@ -182,6 +182,13 @@ fn lookup_sensor(app: &tauri::AppHandle, chip_id: u32) -> String {
 }
 
 #[tauri::command]
+fn cmd_get_memory(state: State<Mutex<AppState>>) -> Result<serde_json::Value, String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let entries = st.camera.memory_stats().map_err(|e| e.to_string())?;
+    serde_json::to_value(&entries).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn cmd_set_stream_source(chip_id: u32, state: State<Mutex<AppState>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.camera
@@ -277,26 +284,35 @@ fn cmd_list_examples(
     let allowed_paths: Option<Vec<String>> = if board.is_some() || sensor.is_some() {
         index.as_ref().and_then(|idx| {
             let entries = idx["entries"].as_array();
-            Some(filter_entries(entries, board.as_deref(), sensor.as_deref(), &examples_dir))
+            Some(filter_entries(
+                entries,
+                board.as_deref(),
+                sensor.as_deref(),
+                &examples_dir,
+            ))
         })
     } else {
         None // no filter -- show all
     };
 
     // Collect flatten prefixes from "path" entries ending with /*
-    // e.g. "50-OpenMV-Boards/50-STM32-Boards/*" -> "50-OpenMV-Boards/50-STM32-Boards"
-    let flatten_dirs: Vec<String> = index
-        .as_ref()
-        .and_then(|idx| idx["entries"].as_array())
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|e| e["path"].as_str())
-                .filter_map(|p| p.strip_suffix("/*"))
-                .map(|p| p.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    // Only flatten when filtering is active -- unfiltered shows full tree
+    let flatten_dirs: Vec<String> = if board.is_some() || sensor.is_some() {
+        index
+            .as_ref()
+            .and_then(|idx| idx["entries"].as_array())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e["path"].as_str())
+                    .filter_map(|p| p.strip_suffix("/*"))
+                    .map(|p| p.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     // Scan directory tree recursively, filtering by allowed paths
     fn scan(
@@ -329,7 +345,9 @@ fn cmd_list_examples(
                 } else {
                     // Check if this dir is an ancestor of a flatten target
                     // If so, scan into it but don't create a tree node -- inline results
-                    let is_ancestor = flatten_dirs.iter().any(|f| f.starts_with(&format!("{}/", rel_str)));
+                    let is_ancestor = flatten_dirs
+                        .iter()
+                        .any(|f| f.starts_with(&format!("{}/", rel_str)));
                     if is_ancestor {
                         let children = scan(&path, base, allowed, flatten_dirs);
                         items.extend(children);
@@ -447,11 +465,8 @@ fn filter_entries(
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for child in rd.filter_map(|e| e.ok()) {
                     if child.path().is_dir() {
-                        let child_path = format!(
-                            "{}/{}",
-                            prefix,
-                            child.file_name().to_string_lossy()
-                        );
+                        let child_path =
+                            format!("{}/{}", prefix, child.file_name().to_string_lossy());
                         allowed.push(child_path);
                     }
                 }
@@ -587,6 +602,7 @@ pub fn run() {
             cmd_disconnect,
             cmd_get_version,
             cmd_get_sysinfo,
+            cmd_get_memory,
             cmd_run_script,
             cmd_stop_script,
             cmd_enable_streaming,

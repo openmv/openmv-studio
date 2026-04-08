@@ -134,11 +134,19 @@ impl Transport {
     }
 
     fn calc_crc16(&self, data: &[u8]) -> u16 {
-        if self.crc_enabled { CRC16.checksum(data) } else { 0 }
+        if self.crc_enabled {
+            CRC16.checksum(data)
+        } else {
+            0
+        }
     }
 
     fn calc_crc32(&self, data: &[u8]) -> u32 {
-        if self.crc_enabled { CRC32.checksum(data) } else { 0 }
+        if self.crc_enabled {
+            CRC32.checksum(data)
+        } else {
+            0
+        }
     }
 
     fn check_crc16(&self, crc: u16, data: &[u8]) -> bool {

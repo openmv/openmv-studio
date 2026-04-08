@@ -76,31 +76,8 @@
         <!-- Docs panel -->
         <div class="side-panel-content" data-panel="docs" style="display:none">
           <div class="side-panel-header">Documentation</div>
-          <div class="file-tree">
-            <div class="tree-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              <span>Getting Started</span>
-            </div>
-            <div class="tree-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              <span>MicroPython Reference</span>
-            </div>
-            <div class="tree-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              <span>Image Module</span>
-            </div>
-            <div class="tree-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              <span>Sensor Module</span>
-            </div>
-            <div class="tree-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              <span>Machine Learning</span>
-            </div>
-            <div class="tree-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              <span>Hardware Guide</span>
-            </div>
+          <div id="docs-tree" class="file-tree">
+            <div style="padding:8px;color:var(--text-tertiary)">Loading...</div>
           </div>
         </div>
 
@@ -176,6 +153,7 @@
           <button class="tools-tab" data-tool="controls">Controls</button>
           <button class="tools-tab" data-tool="perf">Performance</button>
           <button class="tools-tab" data-tool="stats">Stats</button>
+          <button class="tools-tab" data-tool="memory">Memory</button>
         </div>
 
         <!-- Histogram tab -->
@@ -260,6 +238,18 @@
               <div class="perf-card-label">Dropped</div>
               <div class="perf-card-value" id="perf-dropped">0</div>
             </div>
+          </div>
+        </div>
+
+        <!-- Memory tab -->
+        <div class="tools-body" data-tool="memory" style="display:none">
+          <div class="mem-poll-control">
+            <label class="mem-poll-label">Poll interval</label>
+            <input type="range" id="mem-poll-slider" min="100" max="1000" step="100" value="500" class="mem-poll-slider">
+            <span class="mem-poll-value" id="mem-poll-value">500 ms</span>
+          </div>
+          <div id="memory-content" class="memory-panel">
+            <div style="padding:8px;color:var(--text-muted)">Connect to view memory</div>
           </div>
         </div>
 

@@ -237,6 +237,33 @@ impl Camera {
 
     // -- Public operations --
 
+    pub fn memory_stats(&mut self) -> Result<Vec<MemEntry>, ProtocolError> {
+        let p = self
+            .cmd(Opcode::SysMemory, 0, None, true)?
+            .ok_or(ProtocolError::Timeout)?;
+        if p.len() < 4 {
+            return Err(ProtocolError::IoError("Invalid SYS_MEMORY response".into()));
+        }
+        let count = p[0] as usize;
+        let mut entries = Vec::with_capacity(count);
+        for i in 0..count {
+            let o = 4 + i * 24;
+            if o + 24 > p.len() {
+                break;
+            }
+            entries.push(MemEntry {
+                mem_type: if p[o] == 0 { "gc".into() } else { "uma".into() },
+                index: p[o + 1],
+                total: u32::from_le_bytes([p[o + 4], p[o + 5], p[o + 6], p[o + 7]]),
+                used: u32::from_le_bytes([p[o + 8], p[o + 9], p[o + 10], p[o + 11]]),
+                free: u32::from_le_bytes([p[o + 12], p[o + 13], p[o + 14], p[o + 15]]),
+                persist: u32::from_le_bytes([p[o + 16], p[o + 17], p[o + 18], p[o + 19]]),
+                peak: u32::from_le_bytes([p[o + 20], p[o + 21], p[o + 22], p[o + 23]]),
+            });
+        }
+        Ok(entries)
+    }
+
     pub fn exec_script(&mut self, script: &str) -> Result<(), ProtocolError> {
         let id = self.ch("stdin")?;
         self.ch_ioctl(id, ioctl::STDIN_RESET, &[])?;
@@ -405,7 +432,11 @@ impl Camera {
             let _ = self.resync();
         }
 
-        PollResult { stdout, frame, script_running }
+        PollResult {
+            stdout,
+            frame,
+            script_running,
+        }
     }
 
     fn poll_status(&mut self, resync: bool) -> Result<HashMap<String, bool>, ProtocolError> {

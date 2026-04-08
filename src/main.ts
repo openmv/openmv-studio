@@ -505,8 +505,205 @@ document.querySelectorAll('.tools-tab').forEach(tab => {
     document.querySelectorAll('.tools-body').forEach(b => (b as HTMLElement).style.display = 'none');
     const body = document.querySelector(`.tools-body[data-tool="${tool}"]`) as HTMLElement;
     if (body) body.style.display = '';
+    if (tool === 'memory') startMemPolling(); else stopMemPolling();
   });
 });
+
+// -- Memory stats --
+
+const MEM_HISTORY_MAX = 120;
+let memHistory: Map<string, { used: number; total: number }[]> = new Map();
+let memPollTimer: number | null = null;
+let memPollInFlight = false;
+let memPollInterval = 500;
+
+function memKey(e: any): string {
+  return e.mem_type === 'gc' ? 'gc' : `uma_${e.index}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+function drawMemGraph(canvas: HTMLCanvasElement, history: { used: number; total: number }[]) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(dpr, dpr);
+
+  // Background
+  ctx.fillStyle = getComputedStyle(canvas).getPropertyValue('--bg-deep').trim() || '#0a0a0c';
+  ctx.fillRect(0, 0, w, h);
+
+  if (history.length < 2) return;
+
+  const maxTotal = Math.max(...history.map(s => s.total));
+  if (maxTotal === 0) return;
+
+  // Grid lines at 25%, 50%, 75%
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  for (const frac of [0.25, 0.5, 0.75]) {
+    const y = h - frac * h;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  // Total line (dimmed)
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < history.length; i++) {
+    const x = (i / (MEM_HISTORY_MAX - 1)) * w;
+    const y = h - (history[i].total / maxTotal) * h;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Used fill
+  ctx.beginPath();
+  for (let i = 0; i < history.length; i++) {
+    const x = (i / (MEM_HISTORY_MAX - 1)) * w;
+    const y = h - (history[i].used / maxTotal) * h;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  const lastX = ((history.length - 1) / (MEM_HISTORY_MAX - 1)) * w;
+  ctx.lineTo(lastX, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(91,156,245,0.2)';
+  ctx.fill();
+
+  // Used line
+  ctx.strokeStyle = '#5b9cf5';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < history.length; i++) {
+    const x = (i / (MEM_HISTORY_MAX - 1)) * w;
+    const y = h - (history[i].used / maxTotal) * h;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function memUsed(e: any): number {
+  return e.used + e.persist;
+}
+
+function renderMemEntry(e: any): string {
+  const key = memKey(e);
+  const used = memUsed(e);
+  const pct = e.total > 0 ? Math.round((used / e.total) * 100) : 0;
+  const label = e.mem_type === 'gc' ? 'GC Heap' : `UMA Pool ${e.index}`;
+  let details = `<div class="mem-row"><span>Used / Total</span><span>${formatBytes(used)} / ${formatBytes(e.total)} (${pct}%)</span></div>`
+    + `<div class="mem-row"><span>Free</span><span>${formatBytes(e.free)}</span></div>`;
+  if (e.mem_type !== 'gc') {
+    details += `<div class="mem-row"><span>Persist</span><span>${formatBytes(e.persist)}</span></div>`
+      + `<div class="mem-row"><span>Peak</span><span>${formatBytes(e.peak)}</span></div>`;
+  }
+  return `<div class="mem-card">`
+    + `<div class="mem-card-header">${label}</div>`
+    + `<canvas class="mem-graph" id="mem-graph-${key}" width="300" height="80"></canvas>`
+    + details
+    + `</div>`;
+}
+
+function updateMemUI(entries: any[]) {
+  const content = document.getElementById('memory-content');
+  if (!content) return;
+
+  // Check if DOM needs rebuilding (entry count or keys changed)
+  const keys = entries.map(memKey);
+  const existing = content.querySelectorAll('.mem-card');
+  const needRebuild = existing.length !== keys.length;
+
+  if (needRebuild) {
+    content.innerHTML = entries.map(renderMemEntry).join('');
+  }
+
+  // Update history
+  for (const e of entries) {
+    const key = memKey(e);
+    let hist = memHistory.get(key);
+    if (!hist) { hist = []; memHistory.set(key, hist); }
+    hist.push({ used: memUsed(e), total: e.total });
+    if (hist.length > MEM_HISTORY_MAX) hist.shift();
+  }
+
+  // Update values and redraw graphs
+  for (const e of entries) {
+    const key = memKey(e);
+    const used = memUsed(e);
+    const pct = e.total > 0 ? Math.round((used / e.total) * 100) : 0;
+    const card = content.querySelector(`#mem-graph-${key}`)?.closest('.mem-card');
+    if (card) {
+      const rows = card.querySelectorAll('.mem-row');
+      if (rows[0]) rows[0].querySelector('span:last-child')!.textContent = `${formatBytes(used)} / ${formatBytes(e.total)} (${pct}%)`;
+      if (rows[1]) rows[1].querySelector('span:last-child')!.textContent = formatBytes(e.free);
+      if (e.mem_type !== 'gc') {
+        if (rows[2]) rows[2].querySelector('span:last-child')!.textContent = formatBytes(e.persist);
+        if (rows[3]) rows[3].querySelector('span:last-child')!.textContent = formatBytes(e.peak);
+      }
+    }
+
+    const canvas = document.getElementById(`mem-graph-${key}`) as HTMLCanvasElement | null;
+    if (canvas) {
+      drawMemGraph(canvas, memHistory.get(key) || []);
+    }
+  }
+}
+
+async function fetchMemoryStats() {
+  const content = document.getElementById('memory-content');
+  if (!content) return;
+  if (!isConnected) {
+    content.innerHTML = '<div style="padding:8px;color:var(--text-muted)">Connect to view memory</div>';
+    return;
+  }
+  if (memPollInFlight) return;
+  memPollInFlight = true;
+  try {
+    const entries = await invoke<any[]>('cmd_get_memory');
+    updateMemUI(entries);
+  } catch (e) {
+    content.innerHTML = '<div style="padding:8px;color:var(--text-muted)">Failed to read memory</div>';
+  } finally {
+    memPollInFlight = false;
+  }
+}
+
+function startMemPolling() {
+  stopMemPolling();
+  fetchMemoryStats();
+  memPollTimer = window.setInterval(fetchMemoryStats, memPollInterval);
+}
+
+const memPollSlider = document.getElementById('mem-poll-slider') as HTMLInputElement;
+const memPollValueLabel = document.getElementById('mem-poll-value')!;
+memPollSlider?.addEventListener('input', () => {
+  memPollInterval = parseInt(memPollSlider.value, 10);
+  memPollValueLabel.textContent = `${memPollInterval} ms`;
+  if (memPollTimer !== null) startMemPolling();
+});
+
+function stopMemPolling() {
+  if (memPollTimer !== null) {
+    clearInterval(memPollTimer);
+    memPollTimer = null;
+  }
+}
+
+function isMemTabActive(): boolean {
+  const tab = document.querySelector('.tools-tab[data-tool="memory"]');
+  return tab?.classList.contains('active') || false;
+}
 
 // Camera controls -- update value labels on slider change
 document.querySelectorAll('.ctrl-slider').forEach(slider => {
@@ -616,6 +813,7 @@ document.querySelectorAll('.sidebar-btn[data-panel]').forEach(btn => {
       sidePanel.classList.add('visible');
       layout.style.gridTemplateColumns = '56px 220px 1fr 4px 40%';
       activePanelName = panel;
+
     }
   });
 });
@@ -922,6 +1120,7 @@ async function doConnect() {
     // Enable streaming and start polling
     try { await invoke('cmd_enable_streaming', { enable: true }); } catch (_) {}
     startPolling();
+    if (isMemTabActive()) startMemPolling();
     // Load examples (filtered by board/sensor if enabled)
     examplesLoaded = false;
     loadExamples();
@@ -933,6 +1132,10 @@ async function doConnect() {
 async function doDisconnect() {
   if (!isConnected) return;
   stopPolling();
+  stopMemPolling();
+  memHistory.clear();
+  const memContent = document.getElementById('memory-content');
+  if (memContent) memContent.innerHTML = '<div style="padding:8px;color:var(--text-muted)">Connect to view memory</div>';
   try { await invoke('cmd_stop_script'); } catch (_) {}
   try { await invoke('cmd_enable_streaming', { enable: false }); } catch (_) {}
   try { await invoke('cmd_disconnect'); } catch (_) {}
