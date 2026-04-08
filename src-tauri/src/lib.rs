@@ -251,7 +251,6 @@ fn cmd_poll(state: State<Mutex<AppState>>) -> Result<ipc::Response, String> {
         let fmt = f.format_str.as_bytes();
         buf.push(fmt.len() as u8);
         buf.extend_from_slice(fmt);
-        buf.push(f.is_jpeg as u8);
         buf.extend_from_slice(&f.data);
     } else {
         buf.extend_from_slice(&0u32.to_le_bytes());

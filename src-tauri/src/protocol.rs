@@ -198,7 +198,6 @@ pub struct FrameInfo {
     pub height: u32,
     pub format_str: String,
     pub data: Vec<u8>,
-    pub is_jpeg: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

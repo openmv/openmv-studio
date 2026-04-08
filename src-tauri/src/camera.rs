@@ -370,13 +370,23 @@ impl Camera {
         let pixels = (width as usize).saturating_mul(height as usize);
 
         Ok(Some(match format {
-            PIXFORMAT_JPEG => FrameInfo {
-                width,
-                height,
-                format_str: "JPEG".into(),
-                data: raw.to_vec(),
-                is_jpeg: true,
-            },
+            PIXFORMAT_JPEG => {
+                use std::io::Cursor;
+                let reader = image::ImageReader::with_format(
+                    Cursor::new(raw),
+                    image::ImageFormat::Jpeg,
+                );
+                let img = reader.decode().map_err(|e| {
+                    ProtocolError::IoError(format!("JPEG decode: {}", e))
+                })?;
+                let rgba = img.to_rgba8();
+                FrameInfo {
+                    width: rgba.width(),
+                    height: rgba.height(),
+                    format_str: "JPEG".into(),
+                    data: rgba.into_raw(),
+                }
+            }
             PIXFORMAT_RGB565 => {
                 let mut rgba = vec![255u8; pixels * 4];
                 for i in 0..pixels {
@@ -393,7 +403,6 @@ impl Camera {
                     height,
                     format_str: "RGB565".into(),
                     data: rgba,
-                    is_jpeg: false,
                 }
             }
             PIXFORMAT_GRAYSCALE => {
@@ -412,7 +421,6 @@ impl Camera {
                     height,
                     format_str: "GRAY".into(),
                     data: rgba,
-                    is_jpeg: false,
                 }
             }
             _ => FrameInfo {
@@ -420,7 +428,6 @@ impl Camera {
                 height,
                 format_str: format!("0x{:08X}", format),
                 data: raw.to_vec(),
-                is_jpeg: false,
             },
         }))
     }

@@ -1598,9 +1598,7 @@ async function doPoll() {
       const fmtBytes = new Uint8Array(raw, pos, fmtLen);
       const formatStr = new TextDecoder().decode(fmtBytes);
       pos += fmtLen;
-      const isJpeg = buf.getUint8(pos) !== 0;
-      pos += 1;
-      const frameData = new Uint8Array(raw, pos);
+      const frameData = new Uint8Array(raw, pos, width * height * 4);
 
       fbResolution.textContent = `${width} x ${height}`;
       fbFormat.textContent = formatStr;
@@ -1612,35 +1610,20 @@ async function doPoll() {
       }
       statusFps.textContent = fpsTimestamps.length.toString();
 
-      if (isJpeg) {
-        const blob = new Blob([frameData], { type: "image/jpeg" });
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        img.onload = () => {
-          fbCanvas.width = img.width;
-          fbCanvas.height = img.height;
-          const ctx = fbCanvas.getContext("2d")!;
-          ctx.drawImage(img, 0, 0);
-          showCanvas();
-          URL.revokeObjectURL(url);
-        };
-        img.src = url;
-      } else {
-        fbCanvas.width = width;
-        fbCanvas.height = height;
-        const ctx = fbCanvas.getContext("2d")!;
-        const imageData = new ImageData(
-          new Uint8ClampedArray(
-            frameData.buffer,
-            frameData.byteOffset,
-            frameData.byteLength,
-          ),
-          width,
-          height,
-        );
-        ctx.putImageData(imageData, 0, 0);
-        showCanvas();
-      }
+      fbCanvas.width = width;
+      fbCanvas.height = height;
+      const ctx = fbCanvas.getContext("2d")!;
+      const imageData = new ImageData(
+        new Uint8ClampedArray(
+          frameData.buffer,
+          frameData.byteOffset,
+          frameData.byteLength,
+        ),
+        width,
+        height,
+      );
+      ctx.putImageData(imageData, 0, 0);
+      showCanvas();
     }
   } catch (e) {
     console.error("poll error:", e);
