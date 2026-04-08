@@ -361,11 +361,6 @@ impl Camera {
         let height = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let format = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         let offset = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
-
-        if width == 0 || height == 0 || width > 4096 || height > 4096 || offset >= data.len() {
-            return Ok(None);
-        }
-
         let raw = &data[offset..];
         let pixels = (width as usize).saturating_mul(height as usize);
 
@@ -388,11 +383,11 @@ impl Camera {
                 }
             }
             PIXFORMAT_RGB565 => {
+                if raw.len() != pixels * 2 {
+                    return Ok(None);
+                }
                 let mut rgba = vec![255u8; pixels * 4];
                 for i in 0..pixels {
-                    if i * 2 + 1 >= raw.len() {
-                        break;
-                    }
                     let px = u16::from_le_bytes([raw[i * 2], raw[i * 2 + 1]]);
                     rgba[i * 4] = (((px >> 11) & 0x1F) as u32 * 255 / 31) as u8;
                     rgba[i * 4 + 1] = (((px >> 5) & 0x3F) as u32 * 255 / 63) as u8;
@@ -406,11 +401,11 @@ impl Camera {
                 }
             }
             PIXFORMAT_GRAYSCALE => {
+                if raw.len() != pixels {
+                    return Ok(None);
+                }
                 let mut rgba = vec![255u8; pixels * 4];
                 for i in 0..pixels {
-                    if i >= raw.len() {
-                        break;
-                    }
                     let g = raw[i];
                     rgba[i * 4] = g;
                     rgba[i * 4 + 1] = g;

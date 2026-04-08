@@ -1416,6 +1416,19 @@ function clearInfoTab() {
       '<div style="padding:8px;color:var(--text-muted)">Connect to view board info</div>';
 }
 
+let fbDisabled = false;
+const btnFbDisable = document.getElementById("btn-fb-disable")!;
+btnFbDisable.addEventListener("click", async () => {
+  if (!isConnected) return;
+  fbDisabled = !fbDisabled;
+  btnFbDisable.classList.toggle("active", fbDisabled);
+  try {
+    await invoke("cmd_enable_streaming", { enable: !fbDisabled });
+  } catch (e) {
+    console.error("Failed to toggle streaming:", e);
+  }
+});
+
 fbSourceSelect.addEventListener("change", async () => {
   const chipId = parseInt(fbSourceSelect.value, 10);
   if (isNaN(chipId)) return;
@@ -1452,7 +1465,7 @@ async function doConnect() {
     } catch (_) {}
     // Enable streaming and start polling
     try {
-      await invoke("cmd_enable_streaming", { enable: true });
+      await invoke("cmd_enable_streaming", { enable: !fbDisabled });
     } catch (_) {}
     startPolling();
     if (isMemTabActive()) startMemPolling();
