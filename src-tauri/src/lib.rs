@@ -4,7 +4,7 @@ mod transport;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::ipc::{self, Channel, InvokeResponseBody};
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 

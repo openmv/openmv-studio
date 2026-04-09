@@ -4,8 +4,28 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use serde::Serialize;
+
 use crate::protocol::*;
-use crate::transport::{ProtocolError, Transport};
+use crate::transport::{TransportError, Transport};
+
+const PIXFORMAT_RGB565: u32 = 0x0C030002;
+const PIXFORMAT_GRAYSCALE: u32 = 0x08020001;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FrameInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
+    pub data: Vec<u8>,
+}
+
+pub struct PollResult {
+    pub stdout: Option<String>,
+    pub frame: Option<FrameInfo>,
+    pub script_running: bool,
+    pub connected: bool,
+}
 
 pub struct Camera {
     transport: Option<Transport>,
@@ -36,13 +56,13 @@ impl Camera {
         self.transport.as_ref().is_some_and(|t| t.port_alive())
     }
 
-    pub fn connect(&mut self, port: &str, baudrate: u32) -> Result<(), ProtocolError> {
+    pub fn connect(&mut self, port: &str, baudrate: u32) -> Result<(), TransportError> {
         self.disconnect();
 
         let serial = serialport::new(port, baudrate)
             .timeout(Duration::from_secs(1))
             .open()
-            .map_err(|e| ProtocolError::IoError(e.to_string()))?;
+            .map_err(|e| TransportError::IoError(e.to_string()))?;
 
         self.transport = Some(Transport::new(
             serial,
@@ -66,8 +86,8 @@ impl Camera {
     }
 
     // -- Protocol primitives --
-    fn transport(&mut self) -> Result<&mut Transport, ProtocolError> {
-        self.transport.as_mut().ok_or(ProtocolError::NotConnected)
+    fn transport(&mut self) -> Result<&mut Transport, TransportError> {
+        self.transport.as_mut().ok_or(TransportError::NotConnected)
     }
 
     fn cmd(
@@ -76,12 +96,12 @@ impl Camera {
         channel: u8,
         data: Option<&[u8]>,
         resync: bool,
-    ) -> Result<Option<Vec<u8>>, ProtocolError> {
+    ) -> Result<Option<Vec<u8>>, TransportError> {
         self.transport()?
             .send_packet(opcode, channel, PacketFlags::empty(), data)?;
         match self.transport()?.recv_packet() {
             Ok(r) => Ok(r),
-            Err(ProtocolError::Checksum | ProtocolError::Sequence | ProtocolError::Timeout)
+            Err(TransportError::Checksum | TransportError::Sequence | TransportError::Timeout)
                 if resync =>
             {
                 log::warn!("Protocol error, resyncing...");
@@ -94,7 +114,7 @@ impl Camera {
         }
     }
 
-    fn resync(&mut self) -> Result<(), ProtocolError> {
+    fn resync(&mut self) -> Result<(), TransportError> {
         let t = self.transport()?;
         t.update_caps(true, true, MIN_PAYLOAD_SIZE);
         t.reset_sequence();
@@ -114,15 +134,15 @@ impl Camera {
                 }
             }
         }
-        Err(ProtocolError::Timeout)
+        Err(TransportError::Timeout)
     }
 
-    fn negotiate_caps(&mut self) -> Result<(), ProtocolError> {
+    fn negotiate_caps(&mut self) -> Result<(), TransportError> {
         let p = self
             .cmd(Opcode::ProtoGetCaps, 0, None, false)?
-            .ok_or(ProtocolError::Timeout)?;
+            .ok_or(TransportError::Timeout)?;
         if p.len() < 6 {
-            return Err(ProtocolError::IoError("Invalid caps".into()));
+            return Err(TransportError::IoError("Invalid caps".into()));
         }
 
         self.max_payload = self
@@ -140,10 +160,10 @@ impl Camera {
         Ok(())
     }
 
-    fn update_channels(&mut self) -> Result<(), ProtocolError> {
+    fn update_channels(&mut self) -> Result<(), TransportError> {
         let p = self
             .cmd(Opcode::ChannelList, 0, None, true)?
-            .ok_or(ProtocolError::Timeout)?;
+            .ok_or(TransportError::Timeout)?;
         self.channels.clear();
         for i in 0..p.len() / 16 {
             let ofs = i * 16;
@@ -203,17 +223,17 @@ impl Camera {
 
     // -- Channel helpers --
 
-    fn ch(&self, name: &str) -> Result<u8, ProtocolError> {
+    fn ch(&self, name: &str) -> Result<u8, TransportError> {
         self.channels
             .get(name)
             .copied()
-            .ok_or_else(|| ProtocolError::IoError(format!("Channel '{}' not found", name)))
+            .ok_or_else(|| TransportError::IoError(format!("Channel '{}' not found", name)))
     }
 
-    fn ch_size(&mut self, id: u8, resync: bool) -> Result<u32, ProtocolError> {
+    fn ch_size(&mut self, id: u8, resync: bool) -> Result<u32, TransportError> {
         let p = self
             .cmd(Opcode::ChannelSize, id, None, resync)?
-            .ok_or(ProtocolError::Timeout)?;
+            .ok_or(TransportError::Timeout)?;
         Ok(u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
     }
 
@@ -223,15 +243,15 @@ impl Camera {
         offset: u32,
         length: u32,
         resync: bool,
-    ) -> Result<Vec<u8>, ProtocolError> {
+    ) -> Result<Vec<u8>, TransportError> {
         let mut req = [0u8; 8];
         req[0..4].copy_from_slice(&offset.to_le_bytes());
         req[4..8].copy_from_slice(&length.to_le_bytes());
         self.cmd(Opcode::ChannelRead, id, Some(&req), resync)?
-            .ok_or(ProtocolError::Timeout)
+            .ok_or(TransportError::Timeout)
     }
 
-    fn ch_write(&mut self, id: u8, data: &[u8]) -> Result<(), ProtocolError> {
+    fn ch_write(&mut self, id: u8, data: &[u8]) -> Result<(), TransportError> {
         let chunk_size = self.max_payload - 8;
         for (i, chunk) in data.chunks(chunk_size).enumerate() {
             let offset = (i * chunk_size) as u32;
@@ -244,7 +264,7 @@ impl Camera {
         Ok(())
     }
 
-    fn ch_ioctl(&mut self, id: u8, cmd: u32, args: &[u32]) -> Result<(), ProtocolError> {
+    fn ch_ioctl(&mut self, id: u8, cmd: u32, args: &[u32]) -> Result<(), TransportError> {
         let mut buf = vec![0u8; 4 + args.len() * 4];
         buf[0..4].copy_from_slice(&cmd.to_le_bytes());
         for (i, a) in args.iter().enumerate() {
@@ -256,12 +276,12 @@ impl Camera {
 
     // -- Public operations --
 
-    pub fn memory_stats(&mut self) -> Result<Vec<MemEntry>, ProtocolError> {
+    pub fn memory_stats(&mut self) -> Result<Vec<MemEntry>, TransportError> {
         let p = self
             .cmd(Opcode::SysMemory, 0, None, true)?
-            .ok_or(ProtocolError::Timeout)?;
+            .ok_or(TransportError::Timeout)?;
         if p.len() < 4 {
-            return Err(ProtocolError::IoError("Invalid SYS_MEMORY response".into()));
+            return Err(TransportError::IoError("Invalid SYS_MEMORY response".into()));
         }
         let count = p[0] as usize;
         let mut entries = Vec::with_capacity(count);
@@ -283,12 +303,12 @@ impl Camera {
         Ok(entries)
     }
 
-    pub fn device_stats(&mut self) -> Result<ProtoStats, ProtocolError> {
+    pub fn device_stats(&mut self) -> Result<ProtoStats, TransportError> {
         let p = self
             .cmd(Opcode::ProtoStats, 0, None, true)?
-            .ok_or(ProtocolError::Timeout)?;
+            .ok_or(TransportError::Timeout)?;
         if p.len() < 32 {
-            return Err(ProtocolError::IoError(
+            return Err(TransportError::IoError(
                 "Invalid PROTO_STATS response".into(),
             ));
         }
@@ -309,30 +329,30 @@ impl Camera {
         self.channels.iter().map(|(k, &v)| (k.clone(), v)).collect()
     }
 
-    pub fn exec_script(&mut self, script: &str) -> Result<(), ProtocolError> {
+    pub fn exec_script(&mut self, script: &str) -> Result<(), TransportError> {
         let id = self.ch("stdin")?;
         self.ch_ioctl(id, ioctl::STDIN_RESET, &[])?;
         self.ch_write(id, script.as_bytes())?;
         self.ch_ioctl(id, ioctl::STDIN_EXEC, &[])
     }
 
-    pub fn stop_script(&mut self) -> Result<(), ProtocolError> {
+    pub fn stop_script(&mut self) -> Result<(), TransportError> {
         let id = self.ch("stdin")?;
         self.ch_ioctl(id, ioctl::STDIN_STOP, &[])
     }
 
-    pub fn enable_streaming(&mut self, enable: bool, raw: bool) -> Result<(), ProtocolError> {
+    pub fn enable_streaming(&mut self, enable: bool, raw: bool) -> Result<(), TransportError> {
         let id = self.ch("stream")?;
         self.ch_ioctl(id, ioctl::STREAM_RAW_CTRL, &[raw as u32])?;
         self.ch_ioctl(id, ioctl::STREAM_CTRL, &[enable as u32])
     }
 
-    pub fn set_stream_source(&mut self, chip_id: u32) -> Result<(), ProtocolError> {
+    pub fn set_stream_source(&mut self, chip_id: u32) -> Result<(), TransportError> {
         let id = self.ch("stream")?;
         self.ch_ioctl(id, ioctl::STREAM_SOURCE, &[chip_id])
     }
 
-    pub fn read_stdout(&mut self, resync: bool) -> Result<Option<String>, ProtocolError> {
+    pub fn read_stdout(&mut self, resync: bool) -> Result<Option<String>, TransportError> {
         let id = self.ch("stdout")?;
         let size = self.ch_size(id, resync)?;
         if size == 0 {
@@ -342,12 +362,12 @@ impl Camera {
         Ok(Some(String::from_utf8_lossy(&data).to_string()))
     }
 
-    pub fn read_frame(&mut self) -> Result<Option<FrameInfo>, ProtocolError> {
+    pub fn read_frame(&mut self) -> Result<Option<FrameInfo>, TransportError> {
         let id = self.ch("stream")?;
 
         match self.cmd(Opcode::ChannelLock, id, None, false) {
             Ok(_) => {}
-            Err(ProtocolError::Nak(Status::Busy)) => return Ok(None),
+            Err(TransportError::Nak(Status::Busy)) => return Ok(None),
             Err(_) => return Ok(None),
         }
 
@@ -356,7 +376,7 @@ impl Camera {
         result
     }
 
-    fn read_frame_locked(&mut self, id: u8) -> Result<Option<FrameInfo>, ProtocolError> {
+    fn read_frame_locked(&mut self, id: u8) -> Result<Option<FrameInfo>, TransportError> {
         let size = self.ch_size(id, false)?;
         if size <= 20 {
             return Ok(None);
@@ -452,10 +472,10 @@ impl Camera {
         }
     }
 
-    fn poll_status(&mut self, resync: bool) -> Result<u32, ProtocolError> {
+    fn poll_status(&mut self, resync: bool) -> Result<u32, TransportError> {
         let p = self
             .cmd(Opcode::ChannelPoll, 0, None, resync)?
-            .ok_or(ProtocolError::Timeout)?;
+            .ok_or(TransportError::Timeout)?;
         Ok(u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
     }
 }

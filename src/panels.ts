@@ -482,6 +482,7 @@ function buildProtoDom(
 
   html += '<div class="proto-section-label">Channels</div>';
 
+  channels.sort((a, b) => a.id - b.id);
   for (const ch of channels) {
     html += `<div class="proto-row"><span>${ch.name}</span><span>${ch.id}</span></div>`;
   }

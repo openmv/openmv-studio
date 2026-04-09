@@ -1,7 +1,21 @@
-// OpenMV Protocol V2 Constants
-// Ported from openmv-python/src/openmv/constants.py
+// OpenMV Protocol V2
+// Ported from protocol/omv_protocol.h
 
 use bitflags::bitflags;
+use serde::Serialize;
+
+/***************************************************************************
+* Protocol Constants
+***************************************************************************/
+
+pub const SYNC_WORD: u16 = 0xD5AA;
+pub const HEADER_SIZE: usize = 10;
+pub const CRC_SIZE: usize = 4;
+pub const MIN_PAYLOAD_SIZE: usize = 52; // 64 - 10 - 2
+
+/***************************************************************************
+* Packet Flags
+***************************************************************************/
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,10 +29,58 @@ bitflags! {
     }
 }
 
-pub const SYNC_WORD: u16 = 0xD5AA;
-pub const HEADER_SIZE: usize = 10;
-pub const CRC_SIZE: usize = 4;
-pub const MIN_PAYLOAD_SIZE: usize = 52; // 64 - 10 - 2
+/***************************************************************************
+* System Events
+***************************************************************************/
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+pub enum EventType {
+    ChannelRegistered = 0x00,
+    ChannelUnregistered = 0x01,
+    SoftReboot = 0x02,
+}
+
+/***************************************************************************
+* Status Codes
+***************************************************************************/
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+pub enum Status {
+    Success = 0x00,
+    Failed = 0x01,
+    Invalid = 0x02,
+    Timeout = 0x03,
+    Busy = 0x04,
+    Checksum = 0x05,
+    Sequence = 0x06,
+    Overflow = 0x07,
+    Fragment = 0x08,
+    Unknown = 0x09,
+}
+
+impl Status {
+    pub fn from_u16(v: u16) -> Option<Self> {
+        match v {
+            0x00 => Some(Self::Success),
+            0x01 => Some(Self::Failed),
+            0x02 => Some(Self::Invalid),
+            0x03 => Some(Self::Timeout),
+            0x04 => Some(Self::Busy),
+            0x05 => Some(Self::Checksum),
+            0x06 => Some(Self::Sequence),
+            0x07 => Some(Self::Overflow),
+            0x08 => Some(Self::Fragment),
+            0x09 => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+/***************************************************************************
+* Protocol Opcodes
+***************************************************************************/
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -76,48 +138,24 @@ impl Opcode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum Status {
-    Success = 0x00,
-    Failed = 0x01,
-    Invalid = 0x02,
-    Timeout = 0x03,
-    Busy = 0x04,
-    Checksum = 0x05,
-    Sequence = 0x06,
-    Overflow = 0x07,
-    Fragment = 0x08,
-    Unknown = 0x09,
+/***************************************************************************
+* Packet Structure
+***************************************************************************/
+
+#[derive(Debug, Clone)]
+pub struct Packet {
+    pub sequence: u8,
+    pub channel: u8,
+    pub flags: PacketFlags,
+    pub opcode: u8,
+    pub length: u16,
+    pub payload: Option<Vec<u8>>,
 }
 
-impl Status {
-    pub fn from_u16(v: u16) -> Option<Self> {
-        match v {
-            0x00 => Some(Self::Success),
-            0x01 => Some(Self::Failed),
-            0x02 => Some(Self::Invalid),
-            0x03 => Some(Self::Timeout),
-            0x04 => Some(Self::Busy),
-            0x05 => Some(Self::Checksum),
-            0x06 => Some(Self::Sequence),
-            0x07 => Some(Self::Overflow),
-            0x08 => Some(Self::Fragment),
-            0x09 => Some(Self::Unknown),
-            _ => None,
-        }
-    }
-}
+/***************************************************************************
+* Channel IOCTL Commands
+***************************************************************************/
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum EventType {
-    ChannelRegistered = 0x00,
-    ChannelUnregistered = 0x01,
-    SoftReboot = 0x02,
-}
-
-// Channel IOCTL commands
 pub mod ioctl {
     // stdin
     pub const STDIN_STOP: u32 = 0x01;
@@ -134,14 +172,16 @@ pub mod ioctl {
     pub const PROFILE_RESET: u32 = 0x02;
 }
 
-// Pixel format constants
-pub const PIXFORMAT_JPEG: u32 = 0x06060000;
-pub const PIXFORMAT_RGB565: u32 = 0x0C030002;
-pub const PIXFORMAT_GRAYSCALE: u32 = 0x08020001;
+/***************************************************************************
+* Response Structs
+***************************************************************************/
 
-// Protocol-level response structs
-
-use serde::Serialize;
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionInfo {
+    pub protocol: [u8; 3],
+    pub bootloader: [u8; 3],
+    pub firmware: [u8; 3],
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
@@ -186,21 +226,6 @@ pub struct ProtoStats {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct VersionInfo {
-    pub protocol: [u8; 3],
-    pub bootloader: [u8; 3],
-    pub firmware: [u8; 3],
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FrameInfo {
-    pub width: u32,
-    pub height: u32,
-    pub format: u32,
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct MemEntry {
     pub mem_type: String,
     pub flags: u16,
@@ -211,9 +236,3 @@ pub struct MemEntry {
     pub peak: u32,
 }
 
-pub struct PollResult {
-    pub stdout: Option<String>,
-    pub frame: Option<FrameInfo>,
-    pub script_running: bool,
-    pub connected: bool,
-}

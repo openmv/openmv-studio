@@ -33,7 +33,7 @@ const CRC16: Crc<u16, Table<16>> = Crc::<u16, Table<16>>::new(&OPENMV_CRC16);
 const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&OPENMV_CRC32);
 
 #[derive(Debug)]
-pub enum ProtocolError {
+pub enum TransportError {
     Timeout,
     Checksum,
     Sequence,
@@ -43,7 +43,7 @@ pub enum ProtocolError {
     NotConnected,
 }
 
-impl std::fmt::Display for ProtocolError {
+impl std::fmt::Display for TransportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Timeout => write!(f, "Timeout"),
@@ -55,16 +55,6 @@ impl std::fmt::Display for ProtocolError {
             Self::NotConnected => write!(f, "Not connected"),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Packet {
-    pub sequence: u8,
-    pub channel: u8,
-    pub flags: PacketFlags,
-    pub opcode: u8,
-    pub length: u16,
-    pub payload: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -174,10 +164,10 @@ impl Transport {
         channel: u8,
         flags: PacketFlags,
         data: Option<&[u8]>,
-    ) -> Result<(), ProtocolError> {
+    ) -> Result<(), TransportError> {
         let length = data.map_or(0, |d| d.len());
         if length > self.max_payload {
-            return Err(ProtocolError::PayloadTooLarge);
+            return Err(TransportError::PayloadTooLarge);
         }
 
         // Header: sync(2) + seq(1) + chan(1) + flags(1) + opcode(1) + length(2) + crc(2)
@@ -202,19 +192,19 @@ impl Transport {
         let total = HEADER_SIZE + length + if length > 0 { CRC_SIZE } else { 0 };
         self.port
             .write_all(&self.pbuf[..total])
-            .map_err(|e| ProtocolError::IoError(e.to_string()))?;
+            .map_err(|e| TransportError::IoError(e.to_string()))?;
 
         Ok(())
     }
 
     /// Receive a packet. Returns Ok(Some(payload)) for data, Ok(None) for ACK, Err for failures.
-    pub fn recv_packet(&mut self) -> Result<Option<Vec<u8>>, ProtocolError> {
+    pub fn recv_packet(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         let mut fragments: Vec<u8> = Vec::new();
         let mut deadline = Instant::now() + self.timeout;
 
         loop {
             if Instant::now() >= deadline {
-                return Err(ProtocolError::Timeout);
+                return Err(TransportError::Timeout);
             }
 
             // Read all available serial data
@@ -227,11 +217,11 @@ impl Transport {
                                 self.buf.extend_from_slice(&self.read_buf[..n]);
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => break,
-                            Err(e) => return Err(ProtocolError::IoError(e.to_string())),
+                            Err(e) => return Err(TransportError::IoError(e.to_string())),
                         }
                     }
                     Ok(_) => break,
-                    Err(e) => return Err(ProtocolError::IoError(e.to_string())),
+                    Err(e) => return Err(TransportError::IoError(e.to_string())),
                 }
             }
 
@@ -253,7 +243,7 @@ impl Transport {
             // the device is out of sync (e.g. after soft-reset). Return
             // error immediately instead of scanning until timeout.
             if !self.check_seq(packet.sequence, packet.opcode, packet.flags) {
-                return Err(ProtocolError::Sequence);
+                return Err(TransportError::Sequence);
             }
 
             // Handle retransmission
@@ -309,12 +299,12 @@ impl Transport {
                         let status_val = u16::from_le_bytes([p[0], p[1]]);
                         let status = Status::from_u16(status_val).unwrap_or(Status::Unknown);
                         return match status {
-                            Status::Busy => Err(ProtocolError::Nak(Status::Busy)),
-                            Status::Failed => Err(ProtocolError::Nak(Status::Failed)),
-                            Status::Checksum => Err(ProtocolError::Checksum),
-                            Status::Sequence => Err(ProtocolError::Sequence),
-                            Status::Timeout => Err(ProtocolError::Timeout),
-                            _ => Err(ProtocolError::Nak(status)),
+                            Status::Busy => Err(TransportError::Nak(Status::Busy)),
+                            Status::Failed => Err(TransportError::Nak(Status::Failed)),
+                            Status::Checksum => Err(TransportError::Checksum),
+                            Status::Sequence => Err(TransportError::Sequence),
+                            Status::Timeout => Err(TransportError::Timeout),
+                            _ => Err(TransportError::Nak(status)),
                         };
                     }
                 }
