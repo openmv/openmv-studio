@@ -66,7 +66,6 @@ impl Camera {
     }
 
     // -- Protocol primitives --
-
     fn transport(&mut self) -> Result<&mut Transport, ProtocolError> {
         self.transport.as_mut().ok_or(ProtocolError::NotConnected)
     }
@@ -166,7 +165,7 @@ impl Camera {
         }
         if let Ok(Some(p)) = self.cmd(Opcode::SysInfo, 0, None, true) {
             if p.len() >= 76 {
-                let u = |o: usize| u32::from_le_bytes([p[o], p[o+1], p[o+2], p[o+3]]);
+                let u = |o: usize| u32::from_le_bytes([p[o], p[o + 1], p[o + 2], p[o + 3]]);
                 let usb_id = u(16);
                 let caps = u(40);
                 self.sysinfo = Some(SystemInfo {
@@ -286,9 +285,11 @@ impl Camera {
             .cmd(Opcode::ProtoStats, 0, None, true)?
             .ok_or(ProtocolError::Timeout)?;
         if p.len() < 32 {
-            return Err(ProtocolError::IoError("Invalid PROTO_STATS response".into()));
+            return Err(ProtocolError::IoError(
+                "Invalid PROTO_STATS response".into(),
+            ));
         }
-        let u = |o: usize| u32::from_le_bytes([p[o], p[o+1], p[o+2], p[o+3]]);
+        let u = |o: usize| u32::from_le_bytes([p[o], p[o + 1], p[o + 2], p[o + 3]]);
         Ok(ProtoStats {
             sent: u(0),
             received: u(4),
@@ -370,71 +371,26 @@ impl Camera {
         let raw = &data[offset..];
         let pixels = (width as usize).saturating_mul(height as usize);
 
-        Ok(Some(match format {
-            PIXFORMAT_JPEG => {
-                use std::io::Cursor;
-                let reader = image::ImageReader::with_format(
-                    Cursor::new(raw),
-                    image::ImageFormat::Jpeg,
-                );
-                let img = reader.decode().map_err(|e| {
-                    ProtocolError::IoError(format!("JPEG decode: {}", e))
-                })?;
-                let rgba = img.to_rgba8();
-                FrameInfo {
-                    width: rgba.width(),
-                    height: rgba.height(),
-                    format: PIXFORMAT_JPEG,
-                    data: rgba.into_raw(),
-                }
-            }
-            PIXFORMAT_RGB565 => {
-                if raw.len() != pixels * 2 {
-                    return Ok(None);
-                }
-                let mut rgba = vec![255u8; pixels * 4];
-                for i in 0..pixels {
-                    let px = u16::from_le_bytes([raw[i * 2], raw[i * 2 + 1]]);
-                    rgba[i * 4] = (((px >> 11) & 0x1F) as u32 * 255 / 31) as u8;
-                    rgba[i * 4 + 1] = (((px >> 5) & 0x3F) as u32 * 255 / 63) as u8;
-                    rgba[i * 4 + 2] = ((px & 0x1F) as u32 * 255 / 31) as u8;
-                }
-                FrameInfo {
-                    width,
-                    height,
-                    format: PIXFORMAT_RGB565,
-                    data: rgba,
-                }
-            }
-            PIXFORMAT_GRAYSCALE => {
-                if raw.len() != pixels {
-                    return Ok(None);
-                }
-                let mut rgba = vec![255u8; pixels * 4];
-                for i in 0..pixels {
-                    let g = raw[i];
-                    rgba[i * 4] = g;
-                    rgba[i * 4 + 1] = g;
-                    rgba[i * 4 + 2] = g;
-                }
-                FrameInfo {
-                    width,
-                    height,
-                    format: PIXFORMAT_GRAYSCALE,
-                    data: rgba,
-                }
-            }
-            _ => FrameInfo {
-                width,
-                height,
-                format,
-                data: raw.to_vec(),
-            },
+        // Send raw pixel data to frontend without conversion. The frontend
+        // handles decoding/rendering images via WebGL and createImageBitmap.
+        match format {
+            PIXFORMAT_RGB565 if raw.len() != pixels * 2 => return Ok(None),
+            PIXFORMAT_GRAYSCALE if raw.len() != pixels => return Ok(None),
+            _ => {}
+        }
+
+        Ok(Some(FrameInfo {
+            width,
+            height,
+            format,
+            data: raw.to_vec(),
         }))
     }
 
     fn ch_status(&self, poll_flags: u32, name: &str) -> bool {
-        self.channels.get(name).map_or(false, |&id| poll_flags & (1 << id) != 0)
+        self.channels
+            .get(name)
+            .map_or(false, |&id| poll_flags & (1 << id) != 0)
     }
 
     pub fn poll(&mut self) -> PollResult {

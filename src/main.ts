@@ -1,5 +1,5 @@
 import * as monaco from "monaco-editor";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Store } from "@tauri-apps/plugin-store";
 import {
@@ -452,7 +452,7 @@ async function saveSettings() {
       theme: currentThemeSetting,
       gridCols: layout.style.gridTemplateColumns || "",
       gridRows: mainArea.style.gridTemplateRows || "",
-      fbRatio: rpH > 0 ? fbH / rpH : 0.5,
+      fbRatio: rpH > 0 ? Math.min(0.85, fbH / rpH) : 0.5,
       pollInterval: pollIntervalMs,
       filterExamples: filterExamples,
     });
@@ -1615,9 +1615,7 @@ document
   ?.addEventListener("click", toggleConnect);
 btnRunStop.addEventListener("click", toggleRunStop);
 
-// -- Unified polling (stdout + frame in one call) --
-let pollTimer: number | null = null;
-let pollInFlight = false;
+// -- Event-driven polling (Rust pushes events, no JS-initiated IPC) --
 const fpsTimestamps: number[] = [];
 
 const fbCanvas = document.getElementById(
@@ -1629,9 +1627,224 @@ const fbFormat = document.getElementById("fb-format")!;
 const statusFps = document.getElementById("status-fps")!;
 const fbFps = document.getElementById("fb-fps")!;
 
+// -- WebGL framebuffer renderer --
+const gl = fbCanvas.getContext("webgl", {
+  alpha: false,
+  antialias: false,
+  preserveDrawingBuffer: false,
+})!;
+
+function initGL() {
+  const vsrc = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_pos * 0.5 + 0.5;
+      v_uv.y = 1.0 - v_uv.y;
+      gl_Position = vec4(a_pos, 0, 1);
+    }`;
+  const fsrc = `
+    precision mediump float;
+    varying vec2 v_uv;
+    uniform sampler2D u_tex;
+    void main() {
+      gl_FragColor = texture2D(u_tex, v_uv);
+    }`;
+
+  function compile(type: number, src: string) {
+    const s = gl.createShader(type)!;
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const prog = gl.createProgram()!;
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+    gl.STATIC_DRAW,
+  );
+  const aPos = gl.getAttribLocation(prog, "a_pos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+initGL();
+
+let glWidth = 0;
+let glHeight = 0;
+
+function glResize(w: number, h: number) {
+  if (w !== glWidth || h !== glHeight) {
+    fbCanvas.width = w;
+    fbCanvas.height = h;
+    gl.viewport(0, 0, w, h);
+    glWidth = w;
+    glHeight = h;
+  }
+}
+
+function glDrawRGB565(data: Uint16Array, w: number, h: number) {
+  glResize(w, h);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, w, h, 0, gl.RGB, gl.UNSIGNED_SHORT_5_6_5, data);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function glDrawGrayscale(data: Uint8Array, w: number, h: number) {
+  glResize(w, h);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, data);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function glDrawBitmap(bitmap: ImageBitmap) {
+  glResize(bitmap.width, bitmap.height);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+// Reusable frame buffer -- grows as needed, never shrinks.
+// Avoids per-frame allocation for raw pixel data.
+let frameBuf = new ArrayBuffer(0);
+
+// Pending frame for rAF-based rendering. Polling stashes the latest
+// frame here; requestAnimationFrame draws it. This decouples serial
+// I/O from rendering so the main thread stays responsive for Monaco.
+let pendingFrame: { format: number; width: number; height: number; dataLen: number } | null = null;
+let rafId = 0;
+
+function renderFrame() {
+  rafId = 0;
+  const f = pendingFrame;
+  if (!f) return;
+  pendingFrame = null;
+
+  if (f.format === 0x06060000) {
+    // JPEG: HW-accelerated decode then GPU upload
+    const blob = new Blob(
+      [new Uint8Array(frameBuf, 0, f.dataLen)],
+      { type: "image/jpeg" },
+    );
+    createImageBitmap(blob).then((bitmap) => {
+      glDrawBitmap(bitmap);
+      bitmap.close();
+      showCanvas(f.format);
+    });
+  } else if (f.format === 0x0c030002) {
+    glDrawRGB565(new Uint16Array(frameBuf, 0, f.width * f.height), f.width, f.height);
+    showCanvas(f.format);
+  } else if (f.format === 0x08020001) {
+    glDrawGrayscale(new Uint8Array(frameBuf, 0, f.width * f.height), f.width, f.height);
+    showCanvas(f.format);
+  }
+}
+
+function scheduleRender() {
+  if (!rafId) rafId = requestAnimationFrame(renderFrame);
+}
+
+// Channel callback -- Rust pushes one binary message per poll iteration.
+// Format: [flags:u8] [stdout_len:u32] [stdout] [w:u32] [h:u32] [fmt:u32] [pixels]
+// If no frame: w=0 h=0, no fmt/pixels.
+const pollChannel = new Channel<ArrayBuffer>();
+pollChannel.onmessage = (raw: ArrayBuffer) => {
+  if (raw.byteLength < 1) return;
+  const view = new DataView(raw);
+  let pos = 0;
+
+  // Flags byte: bit 0 = script_running, bit 1 = connected
+  const flags = view.getUint8(pos);
+  pos += 1;
+  const running = (flags & 1) !== 0;
+  const connected = (flags & 2) !== 0;
+
+  if (!connected) {
+    doDisconnect();
+    return;
+  }
+  if (scriptRunning !== running) {
+    setScriptRunning(running);
+  }
+
+  // Stdout: [len:u32 LE] [bytes]
+  const stdoutLen = view.getUint32(pos, true);
+  pos += 4;
+  if (stdoutLen > 0) {
+    const text = new TextDecoder().decode(new Uint8Array(raw, pos, stdoutLen));
+    let hasException = false;
+    const errorLines: string[] = [];
+    for (const line of text.split("\n")) {
+      if (line.length > 0) {
+        const isError =
+          /^(Traceback|  File |.*Error:|.*Exception:|.*Interrupt:|MPY:)/.test(
+            line,
+          );
+        termLog(line, isError ? "error-line" : "fps-line");
+        if (isError) {
+          hasException = true;
+          errorLines.push(line);
+        }
+      }
+    }
+    if (hasException && !/KeyboardInterrupt/.test(errorLines.join("\n"))) {
+      showExceptionDialog(errorLines.join("\n"));
+    }
+  }
+  pos += stdoutLen;
+
+  // Frame: [width:u32] [height:u32] ...
+  if (pos + 8 > view.byteLength) return;
+  const width = view.getUint32(pos, true);
+  pos += 4;
+  const height = view.getUint32(pos, true);
+  pos += 4;
+
+  if (width > 0 && height > 0) {
+    const format = view.getUint32(pos, true);
+    pos += 4;
+    const dataLen = raw.byteLength - pos;
+
+    fbResolution.textContent = `${width} x ${height}`;
+    fbFormat.textContent =
+      format === 0x06060000
+        ? "JPEG"
+        : format === 0x0c030002
+          ? "RGB565"
+          : format === 0x08020001
+            ? "GRAY"
+            : `0x${format.toString(16).toUpperCase()}`;
+
+    const now = performance.now();
+    fpsTimestamps.push(now);
+    while (fpsTimestamps.length > 0 && now - fpsTimestamps[0] > 1000) {
+      fpsTimestamps.shift();
+    }
+    const fps = fpsTimestamps.length.toString();
+    statusFps.textContent = fps;
+    fbFps.innerHTML = '<span class="fps-num">' + fps + '</span> FPS';
+
+    if (dataLen > frameBuf.byteLength) {
+      frameBuf = new ArrayBuffer(dataLen);
+    }
+    new Uint8Array(frameBuf, 0, dataLen).set(new Uint8Array(raw, pos, dataLen));
+    pendingFrame = { format, width, height, dataLen };
+    scheduleRender();
+  }
+};
+
 function startPolling() {
-  stopPolling();
-  pollTimer = window.setInterval(doPoll, pollIntervalMs);
+  invoke("cmd_start_polling", { intervalMs: pollIntervalMs, channel: pollChannel });
   // Delay memory polling briefly after connect to let the
   // USB SOF burst settle (CDC connect enables SOF for ~16ms at HS).
   if (isMemTabActive()) startMemPolling(200);
@@ -1639,108 +1852,11 @@ function startPolling() {
 }
 
 function stopPolling() {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
-async function doPoll() {
-  if (pollInFlight || !isConnected) return;
-  pollInFlight = true;
-  try {
-    const raw = await invoke<ArrayBuffer>("cmd_poll");
-    const buf = new DataView(raw);
-    let pos = 0;
-
-    // Parse flags byte: bit 0 = script_running, bit 1 = connected
-    const flags = buf.getUint8(pos);
-    pos += 1;
-    const running = (flags & 1) !== 0;
-    const connected = (flags & 2) !== 0;
-    if (!connected) {
-      await doDisconnect();
-      return;
-    }
-    if (scriptRunning !== running) {
-      setScriptRunning(running);
-    }
-
-    // Parse stdout: [len:u32 LE] [bytes]
-    const stdoutLen = buf.getUint32(pos, true);
-    pos += 4;
-    let hasException = false;
-    const errorLines: string[] = [];
-    if (stdoutLen > 0) {
-      const stdoutBytes = new Uint8Array(raw, pos, stdoutLen);
-      const text = new TextDecoder().decode(stdoutBytes);
-      for (const line of text.split("\n")) {
-        if (line.length > 0) {
-          const isError =
-            /^(Traceback|  File |.*Error:|.*Exception:|.*Interrupt:|MPY:)/.test(
-              line,
-            );
-          termLog(line, isError ? "error-line" : "fps-line");
-          if (isError) {
-            hasException = true;
-            errorLines.push(line);
-          }
-        }
-      }
-    }
-    pos += stdoutLen;
-
-    // Show error dialog (ignore KeyboardInterrupt -- that's just script stop)
-    const allErrors = errorLines.join("\n");
-    if (hasException && !/KeyboardInterrupt/.test(allErrors)) {
-      showExceptionDialog(errorLines.join("\n"));
-    }
-
-    // Parse frame: [width:u32] [height:u32] ...
-    if (pos + 8 > buf.byteLength) return;
-    const width = buf.getUint32(pos, true);
-    pos += 4;
-    const height = buf.getUint32(pos, true);
-    pos += 4;
-
-    if (width > 0 && height > 0) {
-      const format = buf.getUint32(pos, true);
-      pos += 4;
-      const frameData = new Uint8Array(raw, pos, width * height * 4);
-
-      fbResolution.textContent = `${width} x ${height}`;
-      fbFormat.textContent =
-        format === 0x06060000
-          ? "JPEG"
-          : format === 0x0c030002
-            ? "RGB565"
-            : format === 0x08020001
-              ? "GRAY"
-              : `0x${format.toString(16).toUpperCase()}`;
-
-      const now = performance.now();
-      fpsTimestamps.push(now);
-      while (fpsTimestamps.length > 0 && now - fpsTimestamps[0] > 1000) {
-        fpsTimestamps.shift();
-      }
-      const fps = fpsTimestamps.length.toString();
-      statusFps.textContent = fps;
-      fbFps.innerHTML = '<span class="fps-num">' + fps + '</span> FPS';
-
-      const frameCopy = new Uint8ClampedArray(frameData);
-      requestAnimationFrame(() => {
-        fbCanvas.width = width;
-        fbCanvas.height = height;
-        const ctx = fbCanvas.getContext("2d")!;
-        const imageData = new ImageData(frameCopy, width, height);
-        ctx.putImageData(imageData, 0, 0);
-        showCanvas(format);
-      });
-    }
-  } catch (e) {
-    console.error("poll error:", e);
-  } finally {
-    pollInFlight = false;
+  invoke("cmd_stop_polling");
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+    pendingFrame = null;
   }
 }
 
@@ -1766,6 +1882,8 @@ const histMin = document.getElementById("hist-min")!;
 const histMax = document.getElementById("hist-max")!;
 const histMode = document.getElementById("hist-mode")!;
 
+let histReadback = new Uint8Array(0);
+
 function isHistTabActive(): boolean {
   const tab = document.querySelector('.tools-tab[data-tool="histogram"]');
   return tab?.classList.contains("active") || false;
@@ -1773,33 +1891,64 @@ function isHistTabActive(): boolean {
 
 function updateHistogram(format: number) {
   if (!isHistTabActive()) return;
-  if (fbCanvas.width === 0 || fbCanvas.height === 0) return;
+  if (frameBuf.byteLength === 0 || glWidth === 0 || glHeight === 0) return;
   const rect = histCanvas.getBoundingClientRect();
   const w = rect.width;
   const h = rect.height;
   if (w === 0 || h === 0) return;
 
-  const ctx = fbCanvas.getContext("2d")!;
-  const imageData = ctx.getImageData(0, 0, fbCanvas.width, fbCanvas.height);
-  const data = imageData.data;
-  const n = data.length / 4;
-
   const isRGB565 = format === 0x0c030002;
+  const isGray = format === 0x08020001;
+  const isJPEG = format === 0x06060000;
   const binCount = isRGB565 ? 32 : 256;
-  const shift = isRGB565 ? 3 : 0;
 
   const binsR = new Uint32Array(binCount);
   const binsG = new Uint32Array(binCount);
   const binsB = new Uint32Array(binCount);
   const binsL = new Uint32Array(256);
+  let n = 0;
 
-  for (let i = 0; i < data.length; i += 4) {
-    binsR[data[i] >> shift]++;
-    binsG[data[i + 1] >> shift]++;
-    binsB[data[i + 2] >> shift]++;
-    const lum = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
-    binsL[lum]++;
+  if (isRGB565) {
+    // Compute directly from raw RGB565 data -- no readback needed
+    const px = new Uint16Array(frameBuf, 0, glWidth * glHeight);
+    n = px.length;
+    for (let i = 0; i < n; i++) {
+      const v = px[i];
+      const r5 = (v >> 11) & 0x1f;
+      const g6 = (v >> 5) & 0x3f;
+      const b5 = v & 0x1f;
+      binsR[r5]++;
+      binsG[g6 >> 1]++;
+      binsB[b5]++;
+      const r8 = (r5 * 255 / 31) | 0;
+      const g8 = (g6 * 255 / 63) | 0;
+      const b8 = (b5 * 255 / 31) | 0;
+      binsL[(r8 * 77 + g8 * 150 + b8 * 29) >> 8]++;
+    }
+  } else if (isGray) {
+    // Compute directly from raw grayscale data
+    const px = new Uint8Array(frameBuf, 0, glWidth * glHeight);
+    n = px.length;
+    for (let i = 0; i < n; i++) {
+      binsR[px[i]]++;
+      binsL[px[i]]++;
+    }
+  } else if (isJPEG) {
+    // JPEG: must read back from WebGL since raw data is compressed
+    const needed = glWidth * glHeight * 4;
+    if (histReadback.length < needed) histReadback = new Uint8Array(needed);
+    const rgba = histReadback;
+    gl.readPixels(0, 0, glWidth, glHeight, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    n = rgba.length / 4;
+    for (let i = 0; i < rgba.length; i += 4) {
+      binsR[rgba[i]]++;
+      binsG[rgba[i + 1]]++;
+      binsB[rgba[i + 2]]++;
+      binsL[(rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8]++;
+    }
   }
+
+  if (n === 0) return;
 
   // Draw histogram
   const dpr = window.devicePixelRatio || 1;
@@ -1808,7 +1957,6 @@ function updateHistogram(format: number) {
   const hctx = histCanvas.getContext("2d")!;
   hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const isGray = format === 0x08020001;
   const channels: [Uint32Array, string][] = isGray
     ? [[binsR, "rgba(180,190,200,0.5)"]]
     : [
@@ -1852,7 +2000,7 @@ function updateHistogram(format: number) {
     hctx.fill();
   }
 
-  // Compute luminance stats (always 256 bins for accuracy)
+  // Compute luminance stats
   let sum = 0,
     min = 255,
     max = 0,
@@ -1869,7 +2017,6 @@ function updateHistogram(format: number) {
   }
   const mean = sum / n;
 
-  // Median
   let cumul = 0,
     median = 0;
   for (let i = 0; i < 256; i++) {
@@ -1880,7 +2027,6 @@ function updateHistogram(format: number) {
     }
   }
 
-  // StDev
   let variance = 0;
   for (let i = 0; i < 256; i++) {
     variance += binsL[i] * (i - mean) * (i - mean);
@@ -2352,9 +2498,7 @@ function openSettings() {
     };
     pollSlider.onchange = () => {
       pollIntervalMs = parseInt(pollSlider.value);
-      if (pollTimer !== null) {
-        startPolling();
-      }
+      invoke("cmd_set_poll_interval", { intervalMs: pollIntervalMs });
       scheduleSaveSettings();
     };
   }
@@ -2426,7 +2570,7 @@ function openSettings() {
     currentThemeSetting = "dark";
     shortcutOverrides = {};
     pollIntervalMs = 50;
-    if (pollTimer !== null) startPolling();
+    invoke("cmd_set_poll_interval", { intervalMs: pollIntervalMs });
     applyTheme("dark");
     setUIScale(1.2);
     editor.updateOptions({

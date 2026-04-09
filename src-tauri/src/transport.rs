@@ -1,5 +1,4 @@
-// OpenMV Protocol Transport Layer -- state machine for packet parsing
-// Ported from openmv-python/src/openmv/transport.py
+// OpenMV Protocol Transport Layer
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};

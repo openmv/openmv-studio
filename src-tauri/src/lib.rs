@@ -2,8 +2,9 @@ mod camera;
 mod protocol;
 mod transport;
 
-use std::sync::Mutex;
-use tauri::ipc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::ipc::{self, Channel, InvokeResponseBody};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 
@@ -20,6 +21,8 @@ struct AppState {
     camera: Camera,
     boards: Vec<Board>,
     sensors: serde_json::Value,
+    poll_running: Arc<AtomicBool>,
+    poll_interval_ms: Arc<AtomicU64>,
 }
 
 fn resolve_resource(app: &tauri::AppHandle, name: &str) -> std::path::PathBuf {
@@ -78,7 +81,7 @@ fn cmd_open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn cmd_list_ports(state: State<Mutex<AppState>>) -> Vec<String> {
+fn cmd_list_ports(state: State<Arc<Mutex<AppState>>>) -> Vec<String> {
     let st = state.lock().unwrap();
     serialport::available_ports()
         .unwrap_or_default()
@@ -95,7 +98,7 @@ fn cmd_list_ports(state: State<Mutex<AppState>>) -> Vec<String> {
 }
 
 #[tauri::command]
-fn cmd_connect(port: String, state: State<Mutex<AppState>>) -> Result<(), String> {
+fn cmd_connect(port: String, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     log::info!("Connecting to {}", port);
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let result = st.camera.connect(&port, 921600).map_err(|e| e.to_string());
@@ -107,7 +110,7 @@ fn cmd_connect(port: String, state: State<Mutex<AppState>>) -> Result<(), String
 }
 
 #[tauri::command]
-fn cmd_disconnect(state: State<Mutex<AppState>>) -> Result<(), String> {
+fn cmd_disconnect(state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     log::info!("Disconnecting");
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.camera.disconnect();
@@ -115,7 +118,7 @@ fn cmd_disconnect(state: State<Mutex<AppState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn cmd_get_version(state: State<Mutex<AppState>>) -> Result<serde_json::Value, String> {
+fn cmd_get_version(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Value, String> {
     let st = state.lock().map_err(|e| e.to_string())?;
     let v = st.camera.verinfo.as_ref().ok_or("Not connected")?;
     Ok(serde_json::json!({
@@ -126,7 +129,7 @@ fn cmd_get_version(state: State<Mutex<AppState>>) -> Result<serde_json::Value, S
 }
 
 #[tauri::command]
-fn cmd_get_sysinfo(state: State<Mutex<AppState>>) -> Result<serde_json::Value, String> {
+fn cmd_get_sysinfo(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Value, String> {
     let st = state.lock().map_err(|e| e.to_string())?;
     let info = st.camera.sysinfo.as_ref().ok_or("Not connected")?;
     let (board_type, board_name) = lookup_board(&st.boards, info.usb_vid, info.usb_pid);
@@ -162,14 +165,14 @@ fn lookup_sensor(sensors: &serde_json::Value, chip_id: u32) -> String {
 }
 
 #[tauri::command]
-fn cmd_get_memory(state: State<Mutex<AppState>>) -> Result<serde_json::Value, String> {
+fn cmd_get_memory(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Value, String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let entries = st.camera.memory_stats().map_err(|e| e.to_string())?;
     serde_json::to_value(&entries).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn cmd_get_stats(state: State<Mutex<AppState>>) -> Result<serde_json::Value, String> {
+fn cmd_get_stats(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Value, String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let stats = st.camera.device_stats().map_err(|e| e.to_string())?;
     let channels: Vec<serde_json::Value> = st.camera.get_channels()
@@ -183,7 +186,7 @@ fn cmd_get_stats(state: State<Mutex<AppState>>) -> Result<serde_json::Value, Str
 }
 
 #[tauri::command]
-fn cmd_set_stream_source(chip_id: u32, state: State<Mutex<AppState>>) -> Result<(), String> {
+fn cmd_set_stream_source(chip_id: u32, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.camera
         .set_stream_source(chip_id)
@@ -191,50 +194,125 @@ fn cmd_set_stream_source(chip_id: u32, state: State<Mutex<AppState>>) -> Result<
 }
 
 #[tauri::command]
-fn cmd_run_script(script: String, state: State<Mutex<AppState>>) -> Result<(), String> {
+fn cmd_run_script(script: String, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.camera.exec_script(&script).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn cmd_stop_script(state: State<Mutex<AppState>>) -> Result<(), String> {
+fn cmd_stop_script(state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.camera.stop_script().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn cmd_enable_streaming(enable: bool, raw: bool, state: State<Mutex<AppState>>) -> Result<(), String> {
+fn cmd_enable_streaming(enable: bool, raw: bool, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.camera
         .enable_streaming(enable, raw)
         .map_err(|e| e.to_string())
 }
 
+// Channel message format (single binary message per poll iteration):
+// [flags:u8] [stdout_len:u32] [stdout_bytes] [width:u32] [height:u32] [format:u32] [pixel_data]
+// If no frame: width and height are both 0, no format or pixel_data follows.
+
 #[tauri::command]
-fn cmd_poll(state: State<Mutex<AppState>>) -> Result<ipc::Response, String> {
+fn cmd_start_polling(
+    interval_ms: u64,
+    channel: Channel,
+    app: tauri::AppHandle,
+    state: State<Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    let result = st.camera.poll();
 
-    let stdout_bytes = result.stdout.unwrap_or_default().into_bytes();
-    let mut buf = Vec::with_capacity(stdout_bytes.len() + 256);
+    // Stop any existing poll thread (its Arc becomes orphaned)
+    st.poll_running.store(false, Ordering::Relaxed);
 
-    // Flags byte: bit 0 = script_running, bit 1 = connected
-    buf.push((result.script_running as u8) | ((result.connected as u8) << 1));
+    // Fresh stop flag for the new thread -- the old thread's
+    // cleanup can't clobber this since it holds a different Arc.
+    let running = Arc::new(AtomicBool::new(true));
+    st.poll_running = running.clone();
+    st.poll_interval_ms.store(interval_ms, Ordering::Relaxed);
 
-    buf.extend_from_slice(&(stdout_bytes.len() as u32).to_le_bytes());
-    buf.extend_from_slice(&stdout_bytes);
+    let interval = st.poll_interval_ms.clone();
+    let state_mtx = app.state::<Arc<Mutex<AppState>>>().inner().clone();
+    drop(st);
 
-    if let Some(f) = result.frame {
-        buf.extend_from_slice(&f.width.to_le_bytes());
-        buf.extend_from_slice(&f.height.to_le_bytes());
-        buf.extend_from_slice(&f.format.to_le_bytes());
-        buf.extend_from_slice(&f.data);
-    } else {
-        buf.extend_from_slice(&0u32.to_le_bytes());
-        buf.extend_from_slice(&0u32.to_le_bytes());
+    std::thread::spawn(move || {
+        poll_loop(&state_mtx, &channel, &running, &interval);
+    });
+
+    Ok(())
+}
+
+fn poll_loop(
+    state: &Arc<Mutex<AppState>>,
+    channel: &Channel,
+    running: &AtomicBool,
+    interval: &AtomicU64,
+) {
+    while running.load(Ordering::Relaxed) {
+        let sleep_ms = interval.load(Ordering::Relaxed);
+
+        // Single lock: poll() does poll_status + stdout + read_frame with
+        // proper resync error recovery, then we drop the lock before sending.
+        let poll_result = {
+            let mut st = match state.lock() {
+                Ok(st) => st,
+                Err(_) => break,
+            };
+            st.camera.poll()
+        };
+
+        // Build single binary message:
+        // [flags:u8] [stdout_len:u32] [stdout] [w:u32] [h:u32] [fmt:u32] [pixels]
+        let stdout_bytes = poll_result.stdout.unwrap_or_default().into_bytes();
+        let flags = (poll_result.script_running as u8)
+            | ((poll_result.connected as u8) << 1);
+
+        let frame_size = poll_result.frame.as_ref()
+            .map(|f| 12 + f.data.len()).unwrap_or(8);
+        let mut buf = Vec::with_capacity(5 + stdout_bytes.len() + frame_size);
+
+        buf.push(flags);
+        buf.extend_from_slice(&(stdout_bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&stdout_bytes);
+
+        if let Some(f) = poll_result.frame {
+            buf.extend_from_slice(&f.width.to_le_bytes());
+            buf.extend_from_slice(&f.height.to_le_bytes());
+            buf.extend_from_slice(&f.format.to_le_bytes());
+            buf.extend_from_slice(&f.data);
+        } else {
+            buf.extend_from_slice(&0u32.to_le_bytes());
+            buf.extend_from_slice(&0u32.to_le_bytes());
+        }
+
+        let _ = channel.send(InvokeResponseBody::Raw(buf));
+
+        if !poll_result.connected {
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
 
-    Ok(ipc::Response::new(buf))
+    running.store(false, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn cmd_stop_polling(state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    st.poll_running.store(false, Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+fn cmd_set_poll_interval(interval_ms: u64, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    st.poll_interval_ms.store(interval_ms, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -568,11 +646,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(AppState {
+        .manage(Arc::new(Mutex::new(AppState {
             camera: Camera::new(),
             boards: vec![],
             sensors: serde_json::json!({}),
-        }))
+            poll_running: Arc::new(AtomicBool::new(false)),
+            poll_interval_ms: Arc::new(AtomicU64::new(50)),
+        })))
         .invoke_handler(tauri::generate_handler![
             cmd_open_url,
             cmd_list_ports,
@@ -586,7 +666,9 @@ pub fn run() {
             cmd_stop_script,
             cmd_enable_streaming,
             cmd_set_stream_source,
-            cmd_poll,
+            cmd_start_polling,
+            cmd_stop_polling,
+            cmd_set_poll_interval,
             cmd_list_examples,
             cmd_read_file,
             cmd_write_file,
@@ -608,7 +690,7 @@ pub fn run() {
                 let handle = app.handle();
                 let boards = load_boards(handle);
                 let sensors = load_sensors(handle);
-                let state = app.state::<Mutex<AppState>>();
+                let state = app.state::<Arc<Mutex<AppState>>>();
                 let mut st = state.lock().unwrap();
                 st.boards = boards;
                 st.sensors = sensors;
