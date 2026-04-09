@@ -587,6 +587,8 @@ listen("request-close", async () => {
       if (f.modified) return; // user cancelled save-as
     }
   }
+  // Disconnect camera before closing
+  try { await invoke("cmd_disconnect"); } catch (_) {}
   await getCurrentWindow().destroy();
 });
 
@@ -626,6 +628,7 @@ document.querySelectorAll(".tools-tab").forEach((tab) => {
 
 const MEM_HISTORY_MAX = 120;
 let memHistory: Map<string, { used: number; total: number }[]> = new Map();
+let memPeak: Map<string, number> = new Map();
 let memPollTimer: number | null = null;
 let memPollInFlight = false;
 let memPollInterval = 500;
@@ -660,6 +663,7 @@ function formatBytes(bytes: number): string {
 function drawMemGraph(
   canvas: HTMLCanvasElement,
   history: { used: number; total: number }[],
+  peak: number = 0,
 ) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
@@ -729,18 +733,23 @@ function drawMemGraph(
   }
   ctx.stroke();
 
-  // Peak line
-  const peak = Math.max(...history.map((s) => s.used));
-  if (peak > 0) {
+  // Peak line (all-time peak)
+  if (peak > 0 && peak < maxTotal * 0.95) {
     const peakY = h - (peak / maxTotal) * h;
     ctx.strokeStyle = "rgba(240,85,85,0.5)";
     ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(0, peakY);
     ctx.lineTo(w, peakY);
     ctx.stroke();
     ctx.setLineDash([]);
+    // Peak label on right
+    ctx.fillStyle = "rgba(240,85,85,0.7)";
+    ctx.font = "9px " + (getComputedStyle(canvas).fontFamily || "monospace");
+    ctx.textAlign = "right";
+    ctx.fillText("peak", w - 2, peakY - 3);
+    ctx.textAlign = "start";
   }
 }
 
@@ -795,8 +804,11 @@ function updateMemUI(entries: any[]) {
       hist = [];
       memHistory.set(key, hist);
     }
-    hist.push({ used: memUsed(e), total: e.total });
+    const u = memUsed(e);
+    hist.push({ used: u, total: e.total });
     if (hist.length > MEM_HISTORY_MAX) hist.shift();
+    const prev = memPeak.get(key) || 0;
+    if (u > prev) memPeak.set(key, u);
   }
 
   // Update values and redraw graphs
@@ -833,7 +845,7 @@ function updateMemUI(entries: any[]) {
       `mem-graph-${key}`,
     ) as HTMLCanvasElement | null;
     if (canvas) {
-      drawMemGraph(canvas, memHistory.get(key) || []);
+      drawMemGraph(canvas, memHistory.get(key) || [], memPeak.get(key) || 0);
     }
   }
 }
@@ -859,10 +871,17 @@ async function fetchMemoryStats() {
   }
 }
 
-function startMemPolling() {
+function startMemPolling(delay = 0) {
   stopMemPolling();
-  fetchMemoryStats();
-  memPollTimer = window.setInterval(fetchMemoryStats, memPollInterval);
+  if (delay > 0) {
+    memPollTimer = window.setTimeout(() => {
+      fetchMemoryStats();
+      memPollTimer = window.setInterval(fetchMemoryStats, memPollInterval);
+    }, delay);
+  } else {
+    fetchMemoryStats();
+    memPollTimer = window.setInterval(fetchMemoryStats, memPollInterval);
+  }
 }
 
 const memPollSlider = document.getElementById(
@@ -1513,8 +1532,6 @@ async function doConnect() {
       await sendStreaming();
     } catch (_) {}
     startPolling();
-    if (isMemTabActive()) startMemPolling();
-    if (isProtoTabActive()) startProtoPolling();
     // Load examples (filtered by board/sensor if enabled)
     examplesLoaded = false;
     loadExamples();
@@ -1529,6 +1546,7 @@ async function doDisconnect() {
   stopMemPolling();
   stopProtoPolling();
   memHistory.clear();
+  memPeak.clear();
   const memContent = document.getElementById("memory-content");
   if (memContent)
     memContent.innerHTML =
@@ -1539,9 +1557,6 @@ async function doDisconnect() {
       '<div style="padding:8px;color:var(--text-muted)">Connect to view protocol stats</div>';
   try {
     await invoke("cmd_stop_script");
-  } catch (_) {}
-  try {
-    await invoke("cmd_enable_streaming", { enable: false });
   } catch (_) {}
   try {
     await invoke("cmd_disconnect");
@@ -1617,6 +1632,10 @@ const fbFps = document.getElementById("fb-fps")!;
 function startPolling() {
   stopPolling();
   pollTimer = window.setInterval(doPoll, pollIntervalMs);
+  // Delay memory polling briefly after connect to let the
+  // USB SOF burst settle (CDC connect enables SOF for ~16ms at HS).
+  if (isMemTabActive()) startMemPolling(200);
+  if (isProtoTabActive()) startProtoPolling();
 }
 
 function stopPolling() {
@@ -1708,20 +1727,15 @@ async function doPoll() {
       statusFps.textContent = fps;
       fbFps.innerHTML = '<span class="fps-num">' + fps + '</span> FPS';
 
-      fbCanvas.width = width;
-      fbCanvas.height = height;
-      const ctx = fbCanvas.getContext("2d")!;
-      const imageData = new ImageData(
-        new Uint8ClampedArray(
-          frameData.buffer,
-          frameData.byteOffset,
-          frameData.byteLength,
-        ),
-        width,
-        height,
-      );
-      ctx.putImageData(imageData, 0, 0);
-      showCanvas(format);
+      const frameCopy = new Uint8ClampedArray(frameData);
+      requestAnimationFrame(() => {
+        fbCanvas.width = width;
+        fbCanvas.height = height;
+        const ctx = fbCanvas.getContext("2d")!;
+        const imageData = new ImageData(frameCopy, width, height);
+        ctx.putImageData(imageData, 0, 0);
+        showCanvas(format);
+      });
     }
   } catch (e) {
     console.error("poll error:", e);
@@ -2066,13 +2080,13 @@ document.addEventListener("keydown", (e) => {
 // Let app shortcuts pass through Monaco to the document
 editor.onKeyDown((e) => {
   const ke = e.browserEvent;
-  if (!ke.metaKey && !ke.ctrlKey) return;
   for (const binding of shortcutBindings) {
     const shortcuts = getActiveShortcuts(binding);
     for (const s of shortcuts) {
       if (matchesShortcut(ke, s)) {
         e.preventDefault();
         e.stopPropagation();
+        binding.action();
         return;
       }
     }
@@ -2181,6 +2195,12 @@ function openSettings() {
 
       <div class="settings-pane" data-stab="connection" style="display:none">
         <div class="pref-row">
+          <span class="pref-label">Connection Type:</span>
+          <select class="pref-select" id="set-conn-type">
+            <option value="serial" selected>Serial</option>
+          </select>
+        </div>
+        <div class="pref-row">
           <span class="pref-label">Baudrate:</span>
           <select class="pref-select" id="set-baudrate">
             <option selected>921600</option>
@@ -2189,12 +2209,11 @@ function openSettings() {
           </select>
         </div>
         <div class="pref-row">
-          <span class="pref-label">Auto Connect:</span>
-          <label class="switch"><input type="checkbox"><span class="switch-slider"></span></label>
-        </div>
-        <div class="pref-row">
-          <span class="pref-label">Auto Run:</span>
-          <label class="switch"><input type="checkbox"><span class="switch-slider"></span></label>
+          <span class="pref-label">Poll Rate:</span>
+          <div class="scale-control">
+            <input type="range" id="set-poll-rate" min="10" max="200" step="10" value="${pollIntervalMs}">
+            <span class="scale-value" id="poll-rate-label">${pollIntervalMs} ms</span>
+          </div>
         </div>
       </div>
 
@@ -2324,6 +2343,21 @@ function openSettings() {
     }
     scheduleSaveSettings();
   };
+  // Poll rate slider
+  const pollSlider = document.getElementById("set-poll-rate") as HTMLInputElement;
+  const pollLabel = document.getElementById("poll-rate-label")!;
+  if (pollSlider) {
+    pollSlider.oninput = () => {
+      pollLabel.textContent = pollSlider.value + " ms";
+    };
+    pollSlider.onchange = () => {
+      pollIntervalMs = parseInt(pollSlider.value);
+      if (pollTimer !== null) {
+        startPolling();
+      }
+      scheduleSaveSettings();
+    };
+  }
   // Theme radios
   overlay.querySelectorAll('input[name="theme"]').forEach((radio) => {
     radio.addEventListener("change", () => {
@@ -2391,6 +2425,8 @@ function openSettings() {
     uiScale = 1.2;
     currentThemeSetting = "dark";
     shortcutOverrides = {};
+    pollIntervalMs = 50;
+    if (pollTimer !== null) startPolling();
     applyTheme("dark");
     setUIScale(1.2);
     editor.updateOptions({

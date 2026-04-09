@@ -15,6 +15,12 @@ pub struct Camera {
     pub verinfo: Option<VersionInfo>,
 }
 
+impl Drop for Camera {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
+}
+
 impl Camera {
     pub fn new() -> Self {
         Self {
