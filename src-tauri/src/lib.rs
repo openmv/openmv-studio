@@ -226,11 +226,10 @@ fn cmd_start_polling(
 ) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
 
-    // Stop any existing poll thread (its Arc becomes orphaned)
+    // Signal the old thread to stop
     st.poll_running.store(false, Ordering::Relaxed);
 
-    // Fresh stop flag for the new thread -- the old thread's
-    // cleanup can't clobber this since it holds a different Arc.
+    // Fresh running flag for the new thread
     let running = Arc::new(AtomicBool::new(true));
     st.poll_running = running.clone();
     st.poll_interval_ms.store(interval_ms, Ordering::Relaxed);
@@ -678,9 +677,9 @@ pub fn run() {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
-                        .target(tauri_plugin_log::Target::new(
+                        .targets([tauri_plugin_log::Target::new(
                             tauri_plugin_log::TargetKind::Stderr,
-                        ))
+                        )])
                         .build(),
                 )?;
             }

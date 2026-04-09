@@ -409,7 +409,6 @@ async function runScript() {
   try {
     await sendStreaming();
     await invoke("cmd_run_script", { script: editor.getValue() });
-    setScriptRunning(true);
   } catch (e: any) {
     console.error("Run failed:", e);
   }

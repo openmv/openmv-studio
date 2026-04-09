@@ -249,6 +249,13 @@ impl Transport {
                 }
             };
 
+            // Sequence check: CRC-valid packet with wrong sequence means
+            // the device is out of sync (e.g. after soft-reset). Return
+            // error immediately instead of scanning until timeout.
+            if !self.check_seq(packet.sequence, packet.opcode, packet.flags) {
+                return Err(ProtocolError::Sequence);
+            }
+
             // Handle retransmission
             if packet.flags.contains(PacketFlags::RTX) && self.sequence != packet.sequence {
                 if packet.flags.contains(PacketFlags::ACK_REQ) {
@@ -380,14 +387,10 @@ impl Transport {
                     }
                     let d = self.data();
 
-                    let seq = d[2];
-                    let flags = PacketFlags::from_bits_truncate(d[4]);
-                    let opcode = d[5];
                     let length = u16::from_le_bytes([d[6], d[7]]);
                     let hdr_crc = u16::from_le_bytes([d[8], d[9]]);
 
                     if length as usize > self.max_payload
-                        || !self.check_seq(seq, opcode, flags)
                         || !self.check_crc16(hdr_crc, &d[..HEADER_SIZE - 2])
                     {
                         self.consume(1);

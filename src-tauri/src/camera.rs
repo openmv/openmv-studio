@@ -108,7 +108,10 @@ impl Camera {
                     return self.negotiate_caps();
                 }
                 Err(_) if attempt < 2 => continue,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    log::error!("Resync failed after 3 attempts: {}", e);
+                    return Err(e);
+                }
             }
         }
         Err(ProtocolError::Timeout)
@@ -436,6 +439,7 @@ impl Camera {
         }
 
         let connected = self.is_connected();
+
         if !connected {
             self.disconnect();
         }
