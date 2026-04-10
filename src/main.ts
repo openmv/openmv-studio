@@ -331,8 +331,11 @@ fbSourceSelect.addEventListener("change", async () => {
 
 // --- Connect / disconnect ---
 
+let connectInProgress = false;
+
 async function doConnect() {
-  if (state.isConnected) { return; }
+  if (state.isConnected || connectInProgress) { return; }
+  connectInProgress = true;
 
   try {
     const ports = await invoke<string[]>("cmd_list_ports");
@@ -364,6 +367,8 @@ async function doConnect() {
     loadExamples();
   } catch (e: any) {
     console.error("Connect failed:", e);
+  } finally {
+    connectInProgress = false;
   }
 }
 

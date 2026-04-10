@@ -100,6 +100,10 @@ fn cmd_list_ports(state: State<Arc<Mutex<AppState>>>) -> Vec<String> {
 #[tauri::command]
 fn cmd_connect(port: String, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     log::info!("Connecting to {}", port);
+    let st = state.lock().map_err(|e| e.to_string())?;
+    st.poll_running.store(false, Ordering::Relaxed);
+    drop(st);
+
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let result = st.camera.connect(&port, 921600).map_err(|e| e.to_string());
     match &result {

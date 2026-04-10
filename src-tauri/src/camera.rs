@@ -60,10 +60,17 @@ impl Camera {
     pub fn connect(&mut self, port: &str, baudrate: u32) -> Result<(), TransportError> {
         self.disconnect();
 
-        let serial = serialport::new(port, baudrate)
+        let mut serial = serialport::new(port, baudrate)
             .timeout(Duration::from_secs(1))
             .open()
             .map_err(|e| TransportError::IoError(e.to_string()))?;
+
+        // Flush any stale data from the OS serial buffer
+        let _ = serial.clear(serialport::ClearBuffer::All);
+
+        // Give firmware time to process DTR events after port open
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = serial.clear(serialport::ClearBuffer::All);
 
         self.transport = Some(Transport::new(
             serial,
