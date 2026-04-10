@@ -604,7 +604,7 @@ function handlePollMessage(raw: ArrayBuffer) {
 
     if (fps > 0) {
       const fpsStr = fps.toFixed(1);
-      fbFps.innerHTML = '<span class="fps-num">' + fpsStr + "</span> FPS";
+      fbFps.textContent = fpsStr;
     }
 
     if (dataLen > frameBuf.byteLength) {
