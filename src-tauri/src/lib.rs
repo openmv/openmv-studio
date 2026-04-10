@@ -265,13 +265,13 @@ fn poll_loop(
         };
 
         // Build single binary message:
-        // [flags:u8] [stdout_len:u32] [stdout] [w:u32] [h:u32] [fmt:u32] [pixels]
+        // [flags:u8] [stdout_len:u32] [stdout] [w:u32] [h:u32] [fmt:u32] [fps:f32] [pixels]
         let stdout_bytes = poll_result.stdout.unwrap_or_default().into_bytes();
         let flags = (poll_result.script_running as u8)
             | ((poll_result.connected as u8) << 1);
 
         let frame_size = poll_result.frame.as_ref()
-            .map(|f| 12 + f.data.len()).unwrap_or(8);
+            .map(|f| 16 + f.data.len()).unwrap_or(8);
         let mut buf = Vec::with_capacity(5 + stdout_bytes.len() + frame_size);
 
         buf.push(flags);
@@ -282,6 +282,7 @@ fn poll_loop(
             buf.extend_from_slice(&f.width.to_le_bytes());
             buf.extend_from_slice(&f.height.to_le_bytes());
             buf.extend_from_slice(&f.format.to_le_bytes());
+            buf.extend_from_slice(&f.fps.to_le_bytes());
             buf.extend_from_slice(&f.data);
         } else {
             buf.extend_from_slice(&0u32.to_le_bytes());
@@ -411,6 +412,7 @@ fn cmd_list_examples(
                                 .replace('-', " ");
                             items.push(serde_json::json!({
                                 "name": if display.is_empty() { name.clone() } else { display },
+                                "sort_key": &name,
                                 "type": "dir",
                                 "children": children,
                             }));
@@ -434,9 +436,9 @@ fn cmd_list_examples(
             }
         }
         items.sort_by(|a, b| {
-            let na = a["name"].as_str().unwrap_or("");
-            let nb = b["name"].as_str().unwrap_or("");
-            na.to_ascii_lowercase().cmp(&nb.to_ascii_lowercase())
+            let ka = a["sort_key"].as_str().unwrap_or(a["name"].as_str().unwrap_or(""));
+            let kb = b["sort_key"].as_str().unwrap_or(b["name"].as_str().unwrap_or(""));
+            ka.to_ascii_lowercase().cmp(&kb.to_ascii_lowercase())
         });
         items
     }
