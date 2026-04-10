@@ -32,11 +32,17 @@ export function initPanels() {
         body.scrollTop = 0;
       }
 
-      if (tool === "memory") { startMemPolling(); }
-      else { stopMemPolling(); }
+      if (tool === "memory") {
+        startMemPolling();
+      } else {
+        stopMemPolling();
+      }
 
-      if (tool === "protocol") { startProtoPolling(); }
-      else { stopProtoPolling(); }
+      if (tool === "protocol") {
+        startProtoPolling();
+      } else {
+        stopProtoPolling();
+      }
     });
   });
 
@@ -48,7 +54,9 @@ export function initPanels() {
     memPollInterval = parseInt(memSlider.value, 10);
     memLabel.textContent = `${memPollInterval} ms`;
 
-    if (memPollTimer !== null) { startMemPolling(); }
+    if (memPollTimer !== null) {
+      startMemPolling();
+    }
   });
 
   // Protocol poll rate slider
@@ -59,7 +67,9 @@ export function initPanels() {
     protoPollInterval = parseInt(protoSlider.value, 10);
     protoLabel.textContent = `${protoPollInterval} ms`;
 
-    if (protoPollTimer !== null) { startProtoPolling(); }
+    if (protoPollTimer !== null) {
+      startProtoPolling();
+    }
   });
 
   initSidebar();
@@ -136,7 +146,9 @@ export function resetMemState() {
 async function fetchMemoryStats() {
   const content = document.getElementById("memory-content");
 
-  if (!content) { return; }
+  if (!content) {
+    return;
+  }
 
   if (!state.isConnected) {
     content.innerHTML =
@@ -144,7 +156,9 @@ async function fetchMemoryStats() {
     return;
   }
 
-  if (memPollInFlight) { return; }
+  if (memPollInFlight) {
+    return;
+  }
 
   memPollInFlight = true;
 
@@ -180,11 +194,15 @@ function updateMemUi(content: HTMLElement, entries: any[]) {
 
     hist.push({ used: u, total: e.total });
 
-    if (hist.length > MEM_HISTORY_MAX) { hist.shift(); }
+    if (hist.length > MEM_HISTORY_MAX) {
+      hist.shift();
+    }
 
     const prev = memPeak.get(key) || 0;
 
-    if (u > prev) { memPeak.set(key, u); }
+    if (u > prev) {
+      memPeak.set(key, u);
+    }
   }
 
   for (let i = 0; i < entries.length; i++) {
@@ -281,11 +299,15 @@ function drawMemGraph(
     getComputedStyle(canvas).getPropertyValue("--bg-deep").trim() || "#0a0a0c";
   ctx.fillRect(0, 0, w, h);
 
-  if (history.length < 2) { return; }
+  if (history.length < 2) {
+    return;
+  }
 
   const maxTotal = Math.max(...history.map((s) => s.total));
 
-  if (maxTotal === 0) { return; }
+  if (maxTotal === 0) {
+    return;
+  }
 
   // Grid lines at 25%, 50%, 75%
   ctx.strokeStyle = "rgba(255,255,255,0.05)";
@@ -309,8 +331,11 @@ function drawMemGraph(
     const x = (i / (MEM_HISTORY_MAX - 1)) * w;
     const y = h - (history[i].total / maxTotal) * h;
 
-    if (i === 0) { ctx.moveTo(x, y); }
-    else { ctx.lineTo(x, y); }
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
 
   ctx.stroke();
@@ -322,8 +347,11 @@ function drawMemGraph(
     const x = (i / (MEM_HISTORY_MAX - 1)) * w;
     const y = h - (history[i].used / maxTotal) * h;
 
-    if (i === 0) { ctx.moveTo(x, y); }
-    else { ctx.lineTo(x, y); }
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
 
   const lastX = ((history.length - 1) / (MEM_HISTORY_MAX - 1)) * w;
@@ -343,8 +371,11 @@ function drawMemGraph(
     const x = (i / (MEM_HISTORY_MAX - 1)) * w;
     const y = h - (history[i].used / maxTotal) * h;
 
-    if (i === 0) { ctx.moveTo(x, y); }
-    else { ctx.lineTo(x, y); }
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
 
   ctx.stroke();
@@ -387,8 +418,13 @@ function decodeUmaFlags(flags: number): string {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) { return (bytes / (1024 * 1024)).toFixed(1) + " MB"; }
-  if (bytes >= 1024) { return (bytes / 1024).toFixed(1) + " KB"; }
+  if (bytes >= 1024 * 1024) {
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  if (bytes >= 1024) {
+    return (bytes / 1024).toFixed(1) + " KB";
+  }
   return bytes + " B";
 }
 
@@ -434,8 +470,13 @@ export function resetProtoState() {
 }
 
 async function fetchProtoStats() {
-  if (!state.isConnected) { return; }
-  if (protoPollInFlight) { return; }
+  if (!state.isConnected) {
+    return;
+  }
+
+  if (protoPollInFlight) {
+    return;
+  }
 
   protoPollInFlight = true;
 
@@ -443,7 +484,9 @@ async function fetchProtoStats() {
     const result = await invoke<any>("cmd_get_stats");
     const content = document.getElementById("proto-content");
 
-    if (!content) { return; }
+    if (!content) {
+      return;
+    }
 
     if (!protoBuilt) {
       buildProtoDom(content, result.channels);
@@ -454,7 +497,9 @@ async function fetchProtoStats() {
     for (const key of PROTO_STAT_KEYS) {
       const el = document.getElementById(`proto-${key}`);
 
-      if (el) { el.textContent = s[key]; }
+      if (el) {
+        el.textContent = s[key];
+      }
     }
   } catch {
     const content = document.getElementById("proto-content");
@@ -504,18 +549,24 @@ const histMode = document.getElementById("hist-mode")!;
 let histReadback = new Uint8Array(0);
 
 export function updateHistogram(format: number, frameBuf: ArrayBuffer) {
-  if (!isHistTabActive()) { return; }
+  if (!isHistTabActive()) {
+    return;
+  }
 
   const glW = wglWidth();
   const glH = wglHeight();
 
-  if (frameBuf.byteLength === 0 || glW === 0 || glH === 0) { return; }
+  if (frameBuf.byteLength === 0 || glW === 0 || glH === 0) {
+    return;
+  }
 
   const rect = histCanvas.getBoundingClientRect();
   const w = rect.width;
   const h = rect.height;
 
-  if (w === 0 || h === 0) { return; }
+  if (w === 0 || h === 0) {
+    return;
+  }
 
   const isRGB565 = format === 0x0c030002;
   const isGray = format === 0x08020001;
@@ -578,7 +629,9 @@ export function updateHistogram(format: number, frameBuf: ArrayBuffer) {
     }
   }
 
-  if (n === 0) { return; }
+  if (n === 0) {
+    return;
+  }
 
   drawHistogram(w, h, binsR, binsG, binsB, binsL, n, isGray);
 }
@@ -614,7 +667,9 @@ function drawHistogram(
 
   for (const [bins] of channels) {
     for (let i = 0; i < bins.length; i++) {
-      if (bins[i] > maxVal) { maxVal = bins[i]; }
+      if (bins[i] > maxVal) {
+        maxVal = bins[i];
+      }
     }
   }
 
@@ -643,9 +698,15 @@ function drawHistogram(
       const x = ((i + 0.5) * w) / bc;
       const y = h - (draw[i] / maxVal) * h;
 
-      if (i === 0) { hctx.lineTo(0, y); }
+      if (i === 0) {
+        hctx.lineTo(0, y);
+      }
+
       hctx.lineTo(x, y);
-      if (i === bc - 1) { hctx.lineTo(w, y); }
+
+      if (i === bc - 1) {
+        hctx.lineTo(w, y);
+      }
     }
 
     hctx.lineTo(w, h);
@@ -664,8 +725,13 @@ function drawHistogram(
   for (let i = 0; i < 256; i++) {
     sum += i * binsL[i];
 
-    if (binsL[i] > 0 && i < min) { min = i; }
-    if (binsL[i] > 0 && i > max) { max = i; }
+    if (binsL[i] > 0 && i < min) {
+      min = i;
+    }
+
+    if (binsL[i] > 0 && i > max) {
+      max = i;
+    }
 
     if (binsL[i] > modeCount) {
       modeCount = binsL[i];
@@ -708,11 +774,15 @@ function drawHistogram(
 export let examplesLoaded = false;
 
 export async function loadExamples() {
-  if (examplesLoaded) { return; }
+  if (examplesLoaded) {
+    return;
+  }
 
   const container = document.getElementById("examples-tree");
 
-  if (!container) { return; }
+  if (!container) {
+    return;
+  }
 
   container.innerHTML =
     '<div style="padding:8px;color:var(--text-tertiary)">Loading...</div>';
@@ -720,8 +790,13 @@ export async function loadExamples() {
   try {
     const args: Record<string, any> = {};
 
-    if (state.filterExamples && state.connectedBoard) { args.board = state.connectedBoard; }
-    if (state.filterExamples && state.connectedSensor) { args.sensor = state.connectedSensor; }
+    if (state.filterExamples && state.connectedBoard) {
+      args.board = state.connectedBoard;
+    }
+
+    if (state.filterExamples && state.connectedSensor) {
+      args.sensor = state.connectedSensor;
+    }
 
     const tree = await invoke<any[]>("cmd_list_examples", args);
 
@@ -849,7 +924,9 @@ function initSidebar() {
           `[data-panel="${panel}"]`,
         ) as HTMLElement;
 
-        if (content) { content.style.display = ""; }
+        if (content) {
+          content.style.display = "";
+        }
 
         sidePanel.classList.add("visible");
         layout.style.gridTemplateColumns = "56px 220px 1fr 4px 40%";
@@ -868,7 +945,9 @@ async function openDocsWindow() {
 export function populateInfoTab(sysinfo: any, version: any, port: string) {
   const el = document.getElementById("info-content");
 
-  if (!el) { return; }
+  if (!el) {
+    return;
+  }
 
   const ver = (a: number[]) => `${a[0]}.${a[1]}.${a[2]}`;
   const hex = (n: number) => n.toString(16).toUpperCase();

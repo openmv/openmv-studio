@@ -36,8 +36,13 @@ export function getActiveFile(): OpenFile | undefined {
 }
 
 export function fileName(f: OpenFile): string {
-  if (f.name) { return f.name; }
-  if (f.path) { return f.path.split("/").pop() || f.path; }
+  if (f.name) {
+    return f.name;
+  }
+
+  if (f.path) {
+    return f.path.split("/").pop() || f.path;
+  }
   return `untitled_${f.untitledIndex ?? 0}`;
 }
 
@@ -95,15 +100,24 @@ let dragState: { index: number; startX: number } | null = null;
 
 function initTabDrag(tab: HTMLElement, index: number) {
   tab.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) { return; }
-    if ((e.target as HTMLElement).closest(".close-tab")) { return; }
+    if (e.button !== 0) {
+      return;
+    }
+
+    if ((e.target as HTMLElement).closest(".close-tab")) {
+      return;
+    }
 
     dragState = { index, startX: e.clientX };
 
     const onMove = (ev: MouseEvent) => {
-      if (!dragState) { return; }
+      if (!dragState) {
+        return;
+      }
 
-      if (Math.abs(ev.clientX - dragState.startX) < 5) { return; }
+      if (Math.abs(ev.clientX - dragState.startX) < 5) {
+        return;
+      }
 
       tab.classList.add("dragging");
 
@@ -115,7 +129,9 @@ function initTabDrag(tab: HTMLElement, index: number) {
       });
 
       for (const t of tabs) {
-        if (t === tab) { continue; }
+        if (t === tab) {
+          continue;
+        }
 
         const rect = t.getBoundingClientRect();
         const mid = rect.left + rect.width / 2;
@@ -131,7 +147,9 @@ function initTabDrag(tab: HTMLElement, index: number) {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
 
-      if (!dragState) { return; }
+      if (!dragState) {
+        return;
+      }
 
       const fromIdx = dragState.index;
       dragState = null;
@@ -146,7 +164,9 @@ function initTabDrag(tab: HTMLElement, index: number) {
       let after = false;
 
       for (let ti = 0; ti < tabs.length; ti++) {
-        if (ti === fromIdx) { continue; }
+        if (ti === fromIdx) {
+          continue;
+        }
 
         const rect = tabs[ti].getBoundingClientRect();
         const mid = rect.left + rect.width / 2;
@@ -158,13 +178,20 @@ function initTabDrag(tab: HTMLElement, index: number) {
         }
       }
 
-      if (toIdx < 0 || toIdx === fromIdx) { return; }
+      if (toIdx < 0 || toIdx === fromIdx) {
+        return;
+      }
 
       // Calculate insert position accounting for removal shift
       let insertIdx = after ? toIdx + 1 : toIdx;
-      if (fromIdx < insertIdx) { insertIdx--; }
 
-      if (insertIdx === fromIdx) { return; }
+      if (fromIdx < insertIdx) {
+        insertIdx--;
+      }
+
+      if (insertIdx === fromIdx) {
+        return;
+      }
 
       const moved = openFiles.splice(fromIdx, 1)[0];
       openFiles.splice(insertIdx, 0, moved);
@@ -200,7 +227,9 @@ function updateScrollButtons() {
 let tabScrollInit = false;
 
 function initTabScroll() {
-  if (tabScrollInit) { return; }
+  if (tabScrollInit) {
+    return;
+  }
   tabScrollInit = true;
 
   const bar = document.getElementById("tab-bar")!;
@@ -329,7 +358,9 @@ export async function openFileDialog() {
 export async function saveFile() {
   const f = openFiles[activeFileIndex];
 
-  if (!f) { return; }
+  if (!f) {
+    return;
+  }
 
   if (!f.path) {
     await saveFileAs();
@@ -355,7 +386,9 @@ export async function saveFile() {
 export async function saveFileAs() {
   const f = openFiles[activeFileIndex];
 
-  if (!f) { return; }
+  if (!f) {
+    return;
+  }
 
   const path = await save({
     defaultPath: f.path || `${fileName(f)}.py`,
@@ -365,7 +398,9 @@ export async function saveFileAs() {
     ],
   });
 
-  if (!path) { return; }
+  if (!path) {
+    return;
+  }
 
   f.path = path;
 
@@ -401,13 +436,17 @@ export async function closeFile(index: number) {
       },
     );
 
-    if (result === "Cancel") { return; }
+    if (result === "Cancel") {
+      return;
+    }
 
     if (result === "Yes") {
       switchToFile(index);
       await saveFile();
 
-      if (f.modified) { return; }
+      if (f.modified) {
+        return;
+      }
     }
   }
 

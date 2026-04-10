@@ -82,10 +82,21 @@ export function getShortcutDisplay(binding: ShortcutBinding): string {
 export function shortcutToString(s: Shortcut): string {
   const parts: string[] = [];
 
-  if (s.meta) { parts.push("Cmd"); }
-  if (s.ctrl) { parts.push("Ctrl"); }
-  if (s.alt) { parts.push("Alt"); }
-  if (s.shift) { parts.push("Shift"); }
+  if (s.meta) {
+    parts.push("Cmd");
+  }
+
+  if (s.ctrl) {
+    parts.push("Ctrl");
+  }
+
+  if (s.alt) {
+    parts.push("Alt");
+  }
+
+  if (s.shift) {
+    parts.push("Shift");
+  }
   parts.push(s.key.length === 1 ? s.key.toUpperCase() : s.key);
 
   return parts.join("+");
@@ -98,11 +109,17 @@ export function parseShortcutString(str: string): Shortcut {
   for (const p of parts) {
     const lower = p.toLowerCase();
 
-    if (lower === "cmd" || lower === "meta") { s.meta = true; }
-    else if (lower === "ctrl") { s.ctrl = true; }
-    else if (lower === "shift") { s.shift = true; }
-    else if (lower === "alt" || lower === "opt") { s.alt = true; }
-    else { s.key = p.length === 1 ? p.toLowerCase() : p; }
+    if (lower === "cmd" || lower === "meta") {
+      s.meta = true;
+    } else if (lower === "ctrl") {
+      s.ctrl = true;
+    } else if (lower === "shift") {
+      s.shift = true;
+    } else if (lower === "alt" || lower === "opt") {
+      s.alt = true;
+    } else {
+      s.key = p.length === 1 ? p.toLowerCase() : p;
+    }
   }
 
   return s;

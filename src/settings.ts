@@ -43,7 +43,9 @@ export function initSettings(
   applyThemeFn = applyTheme;
 
   setScheduleSaveSettings(() => {
-    if (saveTimer) { clearTimeout(saveTimer); }
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+    }
     saveTimer = window.setTimeout(saveSettings, 500);
   });
 
@@ -117,10 +119,21 @@ export async function loadSettings() {
       filterExamples?: boolean;
     }>("ui");
 
-    if (ui?.scale) { state.uiScale = ui.scale; }
-    if (ui?.theme) { state.currentThemeSetting = ui.theme; }
-    if (ui?.pollInterval) { state.pollIntervalMs = ui.pollInterval; }
-    if (ui?.filterExamples !== undefined) { state.filterExamples = ui.filterExamples; }
+    if (ui?.scale) {
+      state.uiScale = ui.scale;
+    }
+
+    if (ui?.theme) {
+      state.currentThemeSetting = ui.theme;
+    }
+
+    if (ui?.pollInterval) {
+      state.pollIntervalMs = ui.pollInterval;
+    }
+
+    if (ui?.filterExamples !== undefined) {
+      state.filterExamples = ui.filterExamples;
+    }
 
     if (ui?.gridCols) {
       // Always restore with side panel closed
@@ -161,7 +174,9 @@ export async function loadSettings() {
 
     const savedShortcuts = await s.get<Record<string, string>>("shortcuts");
 
-    if (savedShortcuts) { setShortcutOverrides(savedShortcuts); }
+    if (savedShortcuts) {
+      setShortcutOverrides(savedShortcuts);
+    }
 
     const files = await s.get<{
       openFiles?: string[];
@@ -213,7 +228,9 @@ export function openSettings() {
   document.body.appendChild(overlay);
 
   overlay.onclick = (e) => {
-    if (e.target === overlay) { overlay.remove(); }
+    if (e.target === overlay) {
+      overlay.remove();
+    }
   };
 
   document.addEventListener("keydown", function esc(e) {
@@ -255,7 +272,9 @@ export function openSettings() {
       `.settings-icon-tab[data-stab="${prevTab}"]`,
     ) as HTMLElement;
 
-    if (btn) { btn.click(); }
+    if (btn) {
+      btn.click();
+    }
   }
 
   bindSettingsControls(overlay);
@@ -365,16 +384,29 @@ function bindSettingsControls(overlay: HTMLElement) {
           return;
         }
 
-        if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) { return; }
+        if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) {
+          return;
+        }
 
         const s: Shortcut = {
           key: e.key.length === 1 ? e.key.toLowerCase() : e.key,
         };
 
-        if (e.metaKey) { s.meta = true; }
-        if (e.ctrlKey) { s.ctrl = true; }
-        if (e.shiftKey) { s.shift = true; }
-        if (e.altKey) { s.alt = true; }
+        if (e.metaKey) {
+          s.meta = true;
+        }
+
+        if (e.ctrlKey) {
+          s.ctrl = true;
+        }
+
+        if (e.shiftKey) {
+          s.shift = true;
+        }
+
+        if (e.altKey) {
+          s.alt = true;
+        }
 
         const str = shortcutToString(s);
         const sid = el.dataset.sid!;

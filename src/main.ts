@@ -123,11 +123,15 @@ editor.onDidChangeCursorPosition((e) => {
 function termLog(text: string, cls: string = "") {
   const el = document.getElementById("terminal-output");
 
-  if (!el) { return; }
+  if (!el) {
+    return;
+  }
 
   const div = document.createElement("div");
 
-  if (cls) { div.className = cls; }
+  if (cls) {
+    div.className = cls;
+  }
 
   div.textContent = text;
   el.appendChild(div);
@@ -137,7 +141,9 @@ function termLog(text: string, cls: string = "") {
 document.getElementById("btn-clear-term")?.addEventListener("click", () => {
   const el = document.getElementById("terminal-output");
 
-  if (el) { el.innerHTML = ""; }
+  if (el) {
+    el.innerHTML = "";
+  }
 });
 
 // --- Zoom ---
@@ -194,7 +200,9 @@ function showException(msg: string) {
   const errorLine =
     msg.split("\n").find((l) => /Error:|Exception:/.test(l)) || msg;
 
-  if (!lineNo) { return; }
+  if (!lineNo) {
+    return;
+  }
 
   exceptionDecorations = editor.createDecorationsCollection([
     {
@@ -245,19 +253,25 @@ function setConnected(connected: boolean, info: string = "Disconnected") {
   if (dot) {
     dot.className = "status-dot " + (connected ? "connected" : "disconnected");
   }
-  if (label) { label.textContent = info; }
+  if (label) {
+    label.textContent = info;
+  }
 
   if (btnConnect) {
     btnConnect.classList.toggle("connected", connected);
 
     const lbl = btnConnect.querySelector("span");
 
-    if (lbl) { lbl.textContent = connected ? "Disconnect" : "Connect"; }
+    if (lbl) {
+      lbl.textContent = connected ? "Disconnect" : "Connect";
+    }
   }
 
   btnRunStop.classList.toggle("disabled", !connected);
 
-  if (!connected) { setScriptRunning(false); }
+  if (!connected) {
+    setScriptRunning(false);
+  }
 }
 
 function setScriptRunning(running: boolean) {
@@ -266,7 +280,9 @@ function setScriptRunning(running: boolean) {
   iconPlay.style.display = running ? "none" : "";
   iconStop.style.display = running ? "" : "none";
 
-  if (runStopLabel) { runStopLabel.textContent = running ? "Stop" : "Run"; }
+  if (runStopLabel) {
+    runStopLabel.textContent = running ? "Stop" : "Run";
+  }
 }
 
 // --- Streaming controls ---
@@ -301,7 +317,9 @@ btnFbDisable.addEventListener("click", async () => {
   btnFbDisable.innerHTML = enabled ? ICON_EYE_OPEN : ICON_EYE_CLOSED;
   btnFbDisable.title = enabled ? "Disable streaming" : "Enable streaming";
 
-  if (state.isConnected) { await sendStreaming(); }
+  if (state.isConnected) {
+    await sendStreaming();
+  }
 });
 
 btnFbJpeg.addEventListener("click", async () => {
@@ -310,13 +328,17 @@ btnFbJpeg.addEventListener("click", async () => {
   btnFbJpeg.innerHTML = jpeg ? ICON_JPG_ON : ICON_JPG_OFF;
   btnFbJpeg.title = jpeg ? "JPEG mode" : "RAW mode";
 
-  if (state.isConnected) { await sendStreaming(); }
+  if (state.isConnected) {
+    await sendStreaming();
+  }
 });
 
 fbSourceSelect.addEventListener("change", async () => {
   const chipId = parseInt(fbSourceSelect.value, 10);
 
-  if (isNaN(chipId)) { return; }
+  if (isNaN(chipId)) {
+    return;
+  }
 
   try {
     await invoke("cmd_set_stream_source", { chipId });
@@ -334,7 +356,9 @@ fbSourceSelect.addEventListener("change", async () => {
 let connectInProgress = false;
 
 async function doConnect() {
-  if (state.isConnected || connectInProgress) { return; }
+  if (state.isConnected || connectInProgress) {
+    return;
+  }
   connectInProgress = true;
 
   try {
@@ -373,7 +397,9 @@ async function doConnect() {
 }
 
 async function doDisconnect() {
-  if (!state.isConnected) { return; }
+  if (!state.isConnected) {
+    return;
+  }
 
   stopPolling();
   stopMemPolling();
@@ -402,14 +428,19 @@ async function doDisconnect() {
 }
 
 async function toggleConnect() {
-  if (state.isConnected) { await doDisconnect(); }
-  else { await doConnect(); }
+  if (state.isConnected) {
+    await doDisconnect();
+  } else {
+    await doConnect();
+  }
 }
 
 // --- Run / stop script ---
 
 async function runScript() {
-  if (!state.isConnected) { return; }
+  if (!state.isConnected) {
+    return;
+  }
 
   try {
     await sendStreaming();
@@ -420,7 +451,9 @@ async function runScript() {
 }
 
 async function stopScript() {
-  if (!state.isConnected) { return; }
+  if (!state.isConnected) {
+    return;
+  }
 
   try {
     await invoke("cmd_stop_script");
@@ -430,8 +463,11 @@ async function stopScript() {
 }
 
 async function toggleRunStop() {
-  if (state.scriptRunning) { await stopScript(); }
-  else { await runScript(); }
+  if (state.scriptRunning) {
+    await stopScript();
+  } else {
+    await runScript();
+  }
 }
 
 document
@@ -470,7 +506,9 @@ function renderFrame() {
 
   const f = pendingFrame;
 
-  if (!f) { return; }
+  if (!f) {
+    return;
+  }
 
   pendingFrame = null;
 
@@ -502,7 +540,9 @@ function renderFrame() {
 }
 
 function scheduleRender() {
-  if (!rafId) { rafId = requestAnimationFrame(renderFrame); }
+  if (!rafId) {
+    rafId = requestAnimationFrame(renderFrame);
+  }
 }
 
 function showCanvas(format: number) {
@@ -529,7 +569,9 @@ function showCanvas(format: number) {
 let pollChannel: Channel<ArrayBuffer> | null = null;
 
 function handlePollMessage(raw: ArrayBuffer) {
-  if (raw.byteLength < 1) { return; }
+  if (raw.byteLength < 1) {
+    return;
+  }
 
   const view = new DataView(raw);
   let pos = 0;
@@ -580,7 +622,9 @@ function handlePollMessage(raw: ArrayBuffer) {
   pos += stdoutLen;
 
   // Frame
-  if (pos + 8 > view.byteLength) { return; }
+  if (pos + 8 > view.byteLength) {
+    return;
+  }
 
   const width = view.getUint32(pos, true);
   pos += 4;
@@ -633,8 +677,13 @@ function startPolling() {
     channel: pollChannel,
   });
 
-  if (isMemTabActive()) { startMemPolling(200); }
-  if (isProtoTabActive()) { startProtoPolling(); }
+  if (isMemTabActive()) {
+    startMemPolling(200);
+  }
+
+  if (isProtoTabActive()) {
+    startProtoPolling();
+  }
 }
 
 function stopPolling() {
@@ -758,14 +807,18 @@ loadSettings().then(() => {
   applyTheme(state.currentThemeSetting);
   renderTabs();
 
-  if (!state.filterExamples) { loadExamples(); }
+  if (!state.filterExamples) {
+    loadExamples();
+  }
 });
 
 // --- Close request ---
 
 listen("request-close", async () => {
   for (const f of openFiles) {
-    if (!f.modified) { continue; }
+    if (!f.modified) {
+      continue;
+    }
 
     const { message: dialogMessage } = await import("@tauri-apps/plugin-dialog");
 
@@ -777,7 +830,9 @@ listen("request-close", async () => {
       },
     );
 
-    if (result === "Cancel") { return; }
+    if (result === "Cancel") {
+      return;
+    }
 
     if (result === "Save") {
       const idx = openFiles.indexOf(f);
@@ -790,7 +845,9 @@ listen("request-close", async () => {
         await saveFileAs();
       }
 
-      if (f.modified) { return; }
+      if (f.modified) {
+        return;
+      }
     }
   }
 
