@@ -440,7 +440,6 @@ const fbCanvas = document.getElementById("framebuffer-canvas") as HTMLCanvasElem
 const fbNoImage = document.querySelector(".no-image") as HTMLElement;
 const fbResolution = document.getElementById("fb-resolution")!;
 const fbFormat = document.getElementById("fb-format")!;
-const statusFps = document.getElementById("status-fps")!;
 const fbFps = document.getElementById("fb-fps")!;
 
 wglInit(fbCanvas);
@@ -593,7 +592,7 @@ function handlePollMessage(raw: ArrayBuffer) {
 
     const dataLen = raw.byteLength - pos;
 
-    fbResolution.textContent = `${width} x ${height}`;
+    fbResolution.textContent = `${width}x${height}`;
     fbFormat.textContent =
       format === 0x06060000
         ? "JPEG"
@@ -605,7 +604,6 @@ function handlePollMessage(raw: ArrayBuffer) {
 
     if (fps > 0) {
       const fpsStr = fps.toFixed(1);
-      statusFps.textContent = fpsStr;
       fbFps.innerHTML = '<span class="fps-num">' + fpsStr + "</span> FPS";
     }
 

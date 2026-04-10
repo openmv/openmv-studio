@@ -118,9 +118,6 @@
       <div class="fb-section">
         <div class="fb-header">
           <div class="fb-header-strip">
-            <span class="info-badge badge-res" id="fb-resolution">-- x --</span>
-            <span class="info-badge badge-format" id="fb-format">--</span>
-            <span class="info-badge badge-fps" id="fb-fps">-- FPS</span>
             <div style="flex:1"></div>
             <select id="fb-source" disabled><option value="">No sensor</option></select>
             <button class="fb-btn active" id="btn-fb-disable" title="Disable streaming">
@@ -132,6 +129,11 @@
           </div>
         </div>
         <div class="fb-viewport">
+          <div class="fb-overlay-badges">
+            <span class="info-badge badge-res" id="fb-resolution"></span>
+            <span class="info-badge badge-format" id="fb-format"></span>
+            <span class="info-badge badge-fps" id="fb-fps"></span>
+          </div>
           <div class="no-image">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span>No image data</span>
@@ -210,11 +212,6 @@
       <div class="status-right">
         <div class="status-item">
           <span id="status-cursor">Ln 1, Col 1</span>
-        </div>
-        <span class="status-sep"></span>
-        <div class="fps-display">
-          <span id="status-fps">--</span>
-          <span class="fps-label">FPS</span>
         </div>
       </div>
     </div>

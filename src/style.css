@@ -374,13 +374,20 @@ body {
   font-size: 11px; flex-shrink: 0;
 }
 .info-tag { display: flex; align-items: center; gap: 6px; }
-.info-badge {
-  font-size: 10px; padding: 3px 6px; border-radius: 3px;
-  font-weight: 500; font-family: var(--font-code);
+.fb-overlay-badges {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  display: flex; gap: 4px; pointer-events: none;
 }
-.badge-res { background: var(--accent-blue-dim); color: var(--accent-blue); }
-.badge-format { background: var(--accent-amber-dim); color: var(--accent-amber); }
-.badge-fps { background: var(--bg-elevated); color: var(--text-secondary); }
+.fb-overlay-badges:empty, .fb-overlay-badges:not(:has(.info-badge:not(:empty))) { display: none; }
+.info-badge {
+  font-size: 11px; padding: 3px 7px; border-radius: 3px;
+  font-weight: 500; font-family: var(--font-code);
+  background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.info-badge:empty { display: none; }
+.badge-res { color: var(--text-secondary); }
+.badge-format { color: var(--accent-amber); }
+.badge-fps { color: var(--text-secondary); }
 .badge-fps .fps-num { color: var(--accent-green); }
 
 /* ---- TOOLS PANEL (tabbed: Histogram, Controls, Performance, Stats) ---- */
@@ -453,8 +460,6 @@ body {
 .status-dot.disconnected { background: var(--text-muted); }
 .status-item .val { color: var(--text-secondary); font-weight: 500; }
 .status-sep { width: 1px; height: 12px; background: var(--border-mid); }
-.fps-display { font-family: var(--font-code); font-size: 12px; font-weight: 600; color: var(--accent-green); display: flex; align-items: center; gap: 4px; }
-.fps-label { font-size: 10px; color: var(--text-tertiary); font-weight: 500; font-family: var(--font-ui); }
 
 /* ---- SETTINGS DIALOG (macOS-style) ---- */
 .settings-overlay {
