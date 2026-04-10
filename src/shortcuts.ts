@@ -97,7 +97,15 @@ export function shortcutToString(s: Shortcut): string {
   if (s.shift) {
     parts.push("Shift");
   }
-  parts.push(s.key.length === 1 ? s.key.toUpperCase() : s.key);
+  const keyDisplay: Record<string, string> = {
+    ArrowUp: "Up",
+    ArrowDown: "Down",
+    ArrowLeft: "Left",
+    ArrowRight: "Right",
+  };
+
+  const key = s.key.length === 1 ? s.key.toUpperCase() : (keyDisplay[s.key] || s.key);
+  parts.push(key);
 
   return parts.join("+");
 }

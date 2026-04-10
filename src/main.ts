@@ -23,6 +23,8 @@ import {
   saveFileAs,
   closeFile,
   switchToFile,
+  moveTabLeft,
+  moveTabRight,
   renderTabs,
   startFileWatching,
   openRecentFile,
@@ -799,6 +801,18 @@ setShortcutBindings([
       }
     },
   },
+  {
+    id: "move-tab-left",
+    label: "Move Tab Left",
+    defaults: [{ meta: true, shift: true, key: "ArrowLeft" }],
+    action: moveTabLeft,
+  },
+  {
+    id: "move-tab-right",
+    label: "Move Tab Right",
+    defaults: [{ meta: true, shift: true, key: "ArrowRight" }],
+    action: moveTabRight,
+  },
 ] as ShortcutBinding[]);
 
 initShortcuts(editor);
@@ -813,6 +827,8 @@ loadSettings().then(() => {
   renderTabs();
   startFileWatching();
   updateRecentMenu();
+
+  document.querySelector<HTMLElement>(".right-panel")!.style.visibility = "";
 
   if (!state.filterExamples) {
     loadExamples();

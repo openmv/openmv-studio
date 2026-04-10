@@ -88,6 +88,36 @@ export function createFile(
   return file;
 }
 
+export function moveTabLeft() {
+  if (openFiles.length < 2 || activeFileIndex <= 0) {
+    return;
+  }
+
+  const i = activeFileIndex;
+  const tmp = openFiles[i];
+  openFiles[i] = openFiles[i - 1];
+  openFiles[i - 1] = tmp;
+  activeFileIndex = i - 1;
+
+  renderTabs();
+  scheduleSaveSettings();
+}
+
+export function moveTabRight() {
+  if (openFiles.length < 2 || activeFileIndex >= openFiles.length - 1) {
+    return;
+  }
+
+  const i = activeFileIndex;
+  const tmp = openFiles[i];
+  openFiles[i] = openFiles[i + 1];
+  openFiles[i + 1] = tmp;
+  activeFileIndex = i + 1;
+
+  renderTabs();
+  scheduleSaveSettings();
+}
+
 export function switchToFile(index: number) {
   if (index < 0 || index >= openFiles.length) {
     return;

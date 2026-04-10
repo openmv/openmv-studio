@@ -29,6 +29,7 @@
   --font-code: 'SF Mono', 'Menlo', 'Consolas', monospace;
   --radius-sm: 4px;
   --radius-md: 6px;
+  color-scheme: dark;
 }
 
 /* Light theme */
@@ -55,6 +56,7 @@
   --accent-amber: #c08020;
   --accent-amber-dim: rgba(192,128,32,0.10);
   --fb-bg: #e4e4e8;
+  color-scheme: light;
 }
 
 body {
@@ -232,7 +234,7 @@ body {
   border: 1px solid var(--border-mid); background: var(--bg-surface);
   color: var(--text-primary); font-size: 12px;
 }
-.settings-toggle { position: relative; display: inline-block; }
+.settings-toggle { position: relative; display: inline-block; justify-self: center; }
 .settings-toggle input { display: none; }
 .toggle-track {
   display: block; width: 32px; height: 18px; border-radius: 9px;
@@ -486,12 +488,12 @@ body {
 .settings-overlay {
   position: fixed; inset: 0; z-index: 9999;
   background: rgba(0,0,0,0.45); backdrop-filter: blur(6px);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding-top: 80px;
+  display: flex; align-items: center; justify-content: center;
 }
 .settings-dialog {
   background: var(--bg-panel); border: 1px solid var(--border-mid);
-  border-radius: 10px; width: 520px;
+  border-radius: 10px; width: 520px; height: 560px;
+  display: flex; flex-direction: column;
   box-shadow: 0 24px 64px rgba(0,0,0,0.6);
   overflow: hidden;
 }
@@ -517,36 +519,34 @@ body {
 .settings-icon-tab span { font-size: 10px; font-weight: 500; }
 .settings-divider { height: 1px; background: var(--border-subtle); }
 
-.settings-pane { padding: 20px 32px 24px; }
+.settings-pane { padding: 20px 32px 24px; overflow-y: auto; flex: 1; min-height: 0; }
 
 .pref-row {
-  display: flex; align-items: center; padding: 10px 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0;
   font-size: 13px; color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
 }
+.pref-row:last-child { border-bottom: none; }
 .pref-label {
-  width: 140px; text-align: right; padding-right: 16px; flex-shrink: 0;
+  text-align: left;
   font-weight: 500; color: var(--text-secondary);
 }
-.pref-input {
-  padding: 4px 8px; border-radius: var(--radius-sm);
+.pref-input, .pref-select, .shortcut-input {
+  padding: 5px 8px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-mid); background: var(--bg-surface);
   color: var(--text-primary); font-size: 12px; font-family: var(--font-code);
-  width: 70px; text-align: right;
-}
-.pref-select {
-  padding: 4px 8px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-mid); background: var(--bg-surface);
-  color: var(--text-primary); font-size: 12px;
+  width: 120px; box-sizing: border-box; height: 24px;
 }
 
 /* Scale slider */
-.scale-control { display: flex; align-items: center; gap: 10px; }
+.scale-control { display: flex; align-items: center; gap: 10px; width: 200px; }
 .scale-value {
   font-family: var(--font-code); font-size: 12px; font-weight: 600;
   color: var(--accent-blue); min-width: 40px; text-align: right;
 }
 input[type="range"] {
-  -webkit-appearance: none; width: 140px; height: 4px;
+  -webkit-appearance: none; flex: 1; height: 4px;
   background: var(--bg-active); border-radius: 2px; outline: none;
 }
 input[type="range"]::-webkit-slider-thumb {
@@ -620,22 +620,23 @@ input[type="range"]::-webkit-slider-thumb {
 /* Shortcuts */
 .shortcuts-list { display: flex; flex-direction: column; gap: 4px; }
 .shortcut-row {
-  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
+.shortcut-row:last-child { border-bottom: none; }
 .shortcut-action {
-  width: 140px; text-align: right; font-size: 13px;
-  color: var(--text-secondary); font-weight: 500; flex-shrink: 0;
+  text-align: left; font-size: 13px;
+  color: var(--text-secondary); font-weight: 500;
 }
 .shortcut-input {
-  flex: 1; padding: 5px 10px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-mid); background: var(--bg-surface);
-  color: var(--text-primary); font-size: 12px; font-family: var(--font-code);
   cursor: pointer; text-align: center;
 }
 .shortcut-input:focus {
   border-color: var(--accent-blue); outline: none;
   background: var(--accent-blue-dim);
 }
+.shortcut-value { display: flex; align-items: center; gap: 4px; }
 .shortcut-reset {
   width: 20px; height: 20px; border: none; background: transparent;
   color: var(--text-muted); cursor: pointer; font-size: 12px;

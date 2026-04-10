@@ -75,10 +75,8 @@ export function setUiScale(scale: number) {
 export async function saveSettings() {
   try {
     const s = await getStore();
-    const fb = document.querySelector(".fb-section") as HTMLElement;
-    const rp = document.querySelector(".right-panel") as HTMLElement;
-    const rpH = rp?.getBoundingClientRect().height / state.uiScale;
-    const fbH = fb?.getBoundingClientRect().height / state.uiScale;
+    const tools = document.querySelector(".tools-panel") as HTMLElement;
+    const toolsH = tools?.getBoundingClientRect().height / state.uiScale;
     const layoutEl = document.querySelector<HTMLElement>(".ide-layout")!;
     const mainArea = document.querySelector<HTMLElement>(".main-area")!;
 
@@ -87,13 +85,16 @@ export async function saveSettings() {
       theme: state.currentThemeSetting,
       gridCols: layoutEl.style.gridTemplateColumns || "",
       gridRows: mainArea.style.gridTemplateRows || "",
-      fbRatio: rpH > 0 ? Math.min(0.85, fbH / rpH) : 0.5,
+      toolsHeight: toolsH,
       pollInterval: state.pollIntervalMs,
       filterExamples: state.filterExamples,
     });
 
     await s.set("editor", {
       fontSize: editor.getOption(monaco.editor.EditorOption.fontSize),
+      wordWrap: editor.getOption(monaco.editor.EditorOption.wordWrap),
+      minimap: editor.getOption(monaco.editor.EditorOption.minimap).enabled,
+      lineNumbers: editor.getOption(monaco.editor.EditorOption.lineNumbers),
     });
 
     await s.set("shortcuts", shortcutOverrides);
@@ -122,7 +123,8 @@ export async function loadSettings() {
       theme?: ThemeSetting;
       gridCols?: string;
       gridRows?: string;
-      fbRatio?: number;
+      fbRatio?: number; // legacy
+      toolsHeight?: number;
       pollInterval?: number;
       filterExamples?: boolean;
     }>("ui");
@@ -155,29 +157,44 @@ export async function loadSettings() {
         .style.gridTemplateRows = ui.gridRows;
     }
 
-    if (ui?.fbRatio !== undefined) {
-      requestAnimationFrame(() => {
-        const fb = document.querySelector<HTMLElement>(".fb-section");
-        const tools = document.querySelector<HTMLElement>(".tools-panel");
-        const rp = document.querySelector<HTMLElement>(".right-panel");
+    if (ui?.toolsHeight !== undefined) {
+      const fb = document.querySelector<HTMLElement>(".fb-section");
+      const tools = document.querySelector<HTMLElement>(".tools-panel");
 
-        if (fb && tools && rp) {
-          const rpH = rp.getBoundingClientRect().height / state.uiScale;
-          const fbH = Math.max(80, rpH * ui.fbRatio!);
-          const toolsH = Math.max(60, rpH - fbH - 4);
-
-          fb.style.flex = "none";
-          fb.style.height = fbH + "px";
-          tools.style.flex = "none";
-          tools.style.height = toolsH + "px";
-        }
-      });
+      if (fb && tools) {
+        fb.style.flex = "1";
+        tools.style.flex = "none";
+        tools.style.height = ui.toolsHeight + "px";
+      }
     }
 
-    const editorSettings = await s.get<{ fontSize?: number }>("editor");
+    const editorSettings = await s.get<{
+      fontSize?: number;
+      wordWrap?: number;
+      minimap?: boolean;
+      lineNumbers?: number;
+    }>("editor");
 
-    if (editorSettings?.fontSize) {
-      editor.updateOptions({ fontSize: editorSettings.fontSize });
+    if (editorSettings) {
+      const opts: any = {};
+
+      if (editorSettings.fontSize) {
+        opts.fontSize = editorSettings.fontSize;
+      }
+
+      if (editorSettings.wordWrap !== undefined) {
+        opts.wordWrap = editorSettings.wordWrap === 1 ? "on" : "off";
+      }
+
+      if (editorSettings.minimap !== undefined) {
+        opts.minimap = { enabled: editorSettings.minimap };
+      }
+
+      if (editorSettings.lineNumbers !== undefined) {
+        opts.lineNumbers = editorSettings.lineNumbers === 0 ? "off" : "on";
+      }
+
+      editor.updateOptions(opts);
     }
 
     const savedShortcuts = await s.get<Record<string, string>>("shortcuts");
@@ -306,6 +323,7 @@ function bindSettingsControls(overlay: HTMLElement) {
     const v = parseInt(scaleSlider.value);
     scaleLabel.textContent = v + "%";
     setUiScale(v / 100);
+    scheduleSaveSettings();
   };
 
   // Editor controls
@@ -313,30 +331,35 @@ function bindSettingsControls(overlay: HTMLElement) {
     editor.updateOptions({
       fontSize: parseInt((e.target as HTMLInputElement).value),
     });
+    scheduleSaveSettings();
   };
 
   document.getElementById("set-tab-size")!.onchange = (e) => {
     editor.updateOptions({
       tabSize: parseInt((e.target as HTMLInputElement).value),
     });
+    scheduleSaveSettings();
   };
 
   document.getElementById("set-word-wrap")!.onchange = (e) => {
     editor.updateOptions({
       wordWrap: (e.target as HTMLInputElement).checked ? "on" : "off",
     });
+    scheduleSaveSettings();
   };
 
   document.getElementById("set-minimap")!.onchange = (e) => {
     editor.updateOptions({
       minimap: { enabled: (e.target as HTMLInputElement).checked },
     });
+    scheduleSaveSettings();
   };
 
   document.getElementById("set-line-numbers")!.onchange = (e) => {
     editor.updateOptions({
       lineNumbers: (e.target as HTMLInputElement).checked ? "on" : "off",
     });
+    scheduleSaveSettings();
   };
 
   // Filter examples
@@ -375,6 +398,7 @@ function bindSettingsControls(overlay: HTMLElement) {
   overlay.querySelectorAll('input[name="theme"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       applyThemeFn((radio as HTMLInputElement).value as ThemeSetting);
+      scheduleSaveSettings();
     });
   });
 
@@ -500,11 +524,13 @@ function buildSettingsHtml(): string {
         (b) => `
       <div class="shortcut-row">
         <span class="shortcut-action">${b.label}</span>
-        <input class="shortcut-input" data-sid="${b.id}"
-          value="${shortcutOverrides[b.id] || getShortcutDisplay(b)}"
-          placeholder="${b.defaults.map(shortcutToString).join(" / ")}"
-          readonly>
-        ${shortcutOverrides[b.id] ? `<button class="shortcut-reset" data-sid="${b.id}" title="Reset to default">x</button>` : ""}
+        <div class="shortcut-value">
+          ${shortcutOverrides[b.id] ? `<button class="shortcut-reset" data-sid="${b.id}" title="Reset to default">x</button>` : ""}
+          <input class="shortcut-input" data-sid="${b.id}"
+            value="${shortcutOverrides[b.id] || getShortcutDisplay(b)}"
+            placeholder="${b.defaults.map(shortcutToString).join(" / ")}"
+            readonly>
+        </div>
       </div>
     `,
       )
@@ -540,14 +566,14 @@ const SETTINGS_HTML = `
 
     <div class="settings-pane" data-stab="general">
       <div class="pref-row">
-        <span class="pref-label">UI Scale:</span>
+        <span class="pref-label">UI Scale</span>
         <div class="scale-control">
           <input type="range" id="set-scale" min="50" max="200" step="5" value="{{scalePercent}}">
           <span class="scale-value" id="scale-label">{{scalePercent2}}%</span>
         </div>
       </div>
       <div class="pref-row">
-        <span class="pref-label">Theme:</span>
+        <span class="pref-label">Theme</span>
         <div class="radio-group">
           <label class="radio-opt"><input type="radio" name="theme" value="light" {{lightChecked}}> Light</label>
           <label class="radio-opt"><input type="radio" name="theme" value="dark" {{darkChecked}}> Dark</label>
@@ -555,7 +581,7 @@ const SETTINGS_HTML = `
         </div>
       </div>
       <div class="pref-row">
-        <span class="pref-label">Filter Examples:</span>
+        <span class="pref-label">Filter Examples</span>
         <label class="switch"><input type="checkbox" id="set-filter-examples" {{filterChecked}}><span class="switch-slider"></span></label>
       </div>
       <div class="pref-row">
@@ -566,44 +592,30 @@ const SETTINGS_HTML = `
 
     <div class="settings-pane" data-stab="editor" style="display:none">
       <div class="pref-row">
-        <span class="pref-label">Font Size:</span>
+        <span class="pref-label">Font Size</span>
         <input type="number" class="pref-input" id="set-font-size" value="{{fontSize}}" min="8" max="32">
       </div>
       <div class="pref-row">
-        <span class="pref-label">Tab Size:</span>
+        <span class="pref-label">Tab Size</span>
         <input type="number" class="pref-input" id="set-tab-size" value="4" min="2" max="8">
       </div>
       <div class="pref-row">
-        <span class="pref-label">Word Wrap:</span>
+        <span class="pref-label">Word Wrap</span>
         <label class="switch"><input type="checkbox" id="set-word-wrap"><span class="switch-slider"></span></label>
       </div>
       <div class="pref-row">
-        <span class="pref-label">Minimap:</span>
+        <span class="pref-label">Minimap</span>
         <label class="switch"><input type="checkbox" id="set-minimap"><span class="switch-slider"></span></label>
       </div>
       <div class="pref-row">
-        <span class="pref-label">Line Numbers:</span>
+        <span class="pref-label">Line Numbers</span>
         <label class="switch"><input type="checkbox" checked id="set-line-numbers"><span class="switch-slider"></span></label>
       </div>
     </div>
 
     <div class="settings-pane" data-stab="connection" style="display:none">
       <div class="pref-row">
-        <span class="pref-label">Connection Type:</span>
-        <select class="pref-select" id="set-conn-type">
-          <option value="serial" selected>Serial</option>
-        </select>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Baudrate:</span>
-        <select class="pref-select" id="set-baudrate">
-          <option selected>921600</option>
-          <option>460800</option>
-          <option>115200</option>
-        </select>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Poll Rate:</span>
+        <span class="pref-label">Poll Rate</span>
         <div class="scale-control">
           <input type="range" id="set-poll-rate" min="10" max="200" step="10" value="{{pollInterval}}">
           <span class="scale-value" id="poll-rate-label">{{pollInterval2}} ms</span>
@@ -613,15 +625,15 @@ const SETTINGS_HTML = `
 
     <div class="settings-pane" data-stab="framebuffer" style="display:none">
       <div class="pref-row">
-        <span class="pref-label">JPEG Quality:</span>
+        <span class="pref-label">JPEG Quality</span>
         <input type="number" class="pref-input" value="80" min="10" max="100">
       </div>
       <div class="pref-row">
-        <span class="pref-label">Auto Zoom:</span>
+        <span class="pref-label">Auto Zoom</span>
         <label class="switch"><input type="checkbox" checked><span class="switch-slider"></span></label>
       </div>
       <div class="pref-row">
-        <span class="pref-label">Show Crosshair:</span>
+        <span class="pref-label">Show Crosshair</span>
         <label class="switch"><input type="checkbox"><span class="switch-slider"></span></label>
       </div>
     </div>
