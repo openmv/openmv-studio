@@ -155,6 +155,9 @@ body {
 .tab:hover .close-tab, .tab.active .close-tab { opacity: 0.5; }
 .tab .close-tab:hover { opacity: 1; background: var(--bg-active); }
 .tab .close-tab svg { pointer-events: none; }
+.tab.dragging { opacity: 0.4; }
+.tab.drag-before { border-left: 2px solid var(--accent-blue); }
+.tab.drag-after { border-right: 2px solid var(--accent-blue); }
 
 
 /* ---- SIDE PANEL (Files/Examples/Docs/Settings) ---- */
@@ -374,10 +377,15 @@ body {
   font-size: 11px; flex-shrink: 0;
 }
 .info-tag { display: flex; align-items: center; gap: 6px; }
+.fb-overlay-badges {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  display: flex; gap: 5px; pointer-events: none;
+}
+.fb-overlay-badges:not(:has(.info-badge:not(:empty))) { display: none; }
 .info-badge {
   font-size: 11px; padding: 4px 8px 4px 6px; border-radius: 12px;
   font-weight: 500; font-family: var(--font-code);
-  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.5); color: #e0e0e0;
   display: inline-flex; align-items: center; gap: 5px;
 }
 .info-badge:empty { display: none; }

@@ -84,6 +84,101 @@ export function switchToFile(index: number) {
   scheduleSaveSettings();
 }
 
+let dragState: { index: number; startX: number } | null = null;
+
+function initTabDrag(tab: HTMLElement, index: number) {
+  tab.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) { return; }
+    if ((e.target as HTMLElement).closest(".close-tab")) { return; }
+
+    dragState = { index, startX: e.clientX };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragState) { return; }
+
+      if (Math.abs(ev.clientX - dragState.startX) < 5) { return; }
+
+      tab.classList.add("dragging");
+
+      const bar = tab.parentElement!;
+      const tabs = Array.from(bar.children) as HTMLElement[];
+
+      tabs.forEach((t) => {
+        t.classList.remove("drag-before", "drag-after");
+      });
+
+      for (const t of tabs) {
+        if (t === tab) { continue; }
+
+        const rect = t.getBoundingClientRect();
+        const mid = rect.left + rect.width / 2;
+
+        if (ev.clientX >= rect.left && ev.clientX <= rect.right) {
+          t.classList.add(ev.clientX < mid ? "drag-before" : "drag-after");
+          break;
+        }
+      }
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+
+      if (!dragState) { return; }
+
+      const fromIdx = dragState.index;
+      dragState = null;
+
+      tab.classList.remove("dragging");
+      const bar = tab.parentElement!;
+      const tabs = Array.from(bar.children) as HTMLElement[];
+      tabs.forEach((t) => t.classList.remove("drag-before", "drag-after"));
+
+      // Find drop target
+      let toIdx = -1;
+      let after = false;
+
+      for (let ti = 0; ti < tabs.length; ti++) {
+        if (ti === fromIdx) { continue; }
+
+        const rect = tabs[ti].getBoundingClientRect();
+        const mid = rect.left + rect.width / 2;
+
+        if (ev.clientX >= rect.left && ev.clientX <= rect.right) {
+          toIdx = ti;
+          after = ev.clientX >= mid;
+          break;
+        }
+      }
+
+      if (toIdx < 0 || toIdx === fromIdx) { return; }
+
+      // Calculate insert position accounting for removal shift
+      let insertIdx = after ? toIdx + 1 : toIdx;
+      if (fromIdx < insertIdx) { insertIdx--; }
+
+      if (insertIdx === fromIdx) { return; }
+
+      const moved = openFiles.splice(fromIdx, 1)[0];
+      openFiles.splice(insertIdx, 0, moved);
+
+      if (activeFileIndex === fromIdx) {
+        activeFileIndex = insertIdx;
+      } else if (fromIdx < activeFileIndex && insertIdx >= activeFileIndex) {
+        activeFileIndex--;
+      } else if (fromIdx > activeFileIndex && insertIdx <= activeFileIndex) {
+        activeFileIndex++;
+      }
+
+      renderTabs();
+      scheduleSaveSettings();
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
+
 export function renderTabs() {
   const bar = document.getElementById("tab-bar")!;
 
@@ -93,6 +188,8 @@ export function renderTabs() {
     const tab = document.createElement("div");
 
     tab.className = "tab" + (i === activeFileIndex ? " active" : "");
+
+    initTabDrag(tab, i);
 
     if (f.modified) {
       const dot = document.createElement("span");
