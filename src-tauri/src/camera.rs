@@ -28,9 +28,16 @@ pub struct PollResult {
     pub connected: bool,
 }
 
+/// Channel info: (id, flags)
+#[derive(Debug, Clone)]
+struct ChannelInfo {
+    id: u8,
+    flags: u8,
+}
+
 pub struct Camera {
     transport: Option<Transport>,
-    channels: HashMap<String, u8>,
+    channels: HashMap<String, ChannelInfo>,
     max_payload: usize,
     pub sysinfo: Option<SystemInfo>,
     pub verinfo: Option<VersionInfo>,
@@ -166,10 +173,13 @@ impl Camera {
         for i in 0..p.len() / 16 {
             let ofs = i * 16;
             let id = p[ofs];
+            let flags = p[ofs + 1];
             let name_bytes = &p[ofs + 2..ofs + 16];
             let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(14);
-            self.channels
-                .insert(String::from_utf8_lossy(&name_bytes[..end]).to_string(), id);
+            self.channels.insert(
+                String::from_utf8_lossy(&name_bytes[..end]).to_string(),
+                ChannelInfo { id, flags },
+            );
         }
         Ok(())
     }
@@ -224,7 +234,7 @@ impl Camera {
     fn ch(&self, name: &str) -> Result<u8, TransportError> {
         self.channels
             .get(name)
-            .copied()
+            .map(|ci| ci.id)
             .ok_or_else(|| TransportError::IoError(format!("Channel '{}' not found", name)))
     }
 
@@ -324,8 +334,44 @@ impl Camera {
         })
     }
 
-    pub fn get_channels(&self) -> Vec<(String, u8)> {
-        self.channels.iter().map(|(k, &v)| (k.clone(), v)).collect()
+    pub fn get_channels(&self) -> Vec<(String, u8, u8)> {
+        self.channels
+            .iter()
+            .map(|(k, ci)| (k.clone(), ci.id, ci.flags))
+            .collect()
+    }
+
+    /// Refresh channels if a CHANNEL_REGISTERED event was received,
+    /// then return data for all DYNAMIC channels.
+    pub fn read_dynamic_channels(&mut self) -> Result<Vec<(String, Vec<u8>)>, TransportError> {
+        // Check if transport received a channel registration event
+        if self.transport.as_ref().is_some_and(|t| t.pending_channel) {
+            self.transport.as_mut().unwrap().pending_channel = false;
+            self.update_channels()?;
+        }
+
+        let dynamic: Vec<(String, u8)> = self
+            .channels
+            .iter()
+            .filter(|(_, ci)| ci.flags & CHANNEL_FLAG_DYNAMIC != 0)
+            .map(|(name, ci)| (name.clone(), ci.id))
+            .collect();
+
+        let mut result = Vec::new();
+
+        for (name, id) in dynamic {
+            let size = match self.ch_size(id, true) {
+                Ok(s) if s > 0 => s,
+                _ => continue,
+            };
+
+            match self.ch_read(id, 0, size, true) {
+                Ok(data) => result.push((name, data)),
+                Err(_) => continue,
+            }
+        }
+
+        Ok(result)
     }
 
     pub fn exec_script(&mut self, script: &str) -> Result<(), TransportError> {
@@ -414,7 +460,7 @@ impl Camera {
     fn ch_status(&self, poll_flags: u32, name: &str) -> bool {
         self.channels
             .get(name)
-            .map_or(false, |&id| poll_flags & (1 << id) != 0)
+            .map_or(false, |ci| poll_flags & (1 << ci.id) != 0)
     }
 
     pub fn poll(&mut self) -> PollResult {

@@ -85,6 +85,9 @@ pub struct Transport {
 
     // Read buffer for serial
     read_buf: Vec<u8>,
+
+    // Set when a CHANNEL_REGISTERED event is received
+    pub pending_channel: bool,
 }
 
 impl Drop for Transport {
@@ -117,6 +120,7 @@ impl Transport {
             pos: 0,
             pbuf: vec![0u8; max_payload + HEADER_SIZE + CRC_SIZE],
             read_buf: vec![0u8; 16384],
+            pending_channel: false,
         };
         t.open()?;
         Ok(t)
@@ -315,8 +319,16 @@ impl Transport {
                 )?;
             }
 
-            // Events -- reset deadline but don't return
+            // Events -- set flags inline, reset deadline
             if packet.flags.contains(PacketFlags::EVENT) {
+                if packet.channel == 0 {
+                    let event = packet.payload.as_ref()
+                        .filter(|p| p.len() >= 2)
+                        .map(|p| u16::from_le_bytes([p[0], p[1]]));
+                    if event == Some(EventType::ChannelRegistered as u16) {
+                        self.pending_channel = true;
+                    }
+                }
                 deadline = Instant::now() + self.timeout;
                 continue;
             }

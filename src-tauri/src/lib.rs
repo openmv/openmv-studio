@@ -188,12 +188,28 @@ fn cmd_get_stats(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Value
     let stats = st.camera.device_stats().map_err(|e| e.to_string())?;
     let channels: Vec<serde_json::Value> = st.camera.get_channels()
         .into_iter()
-        .map(|(name, id)| serde_json::json!({"name": name, "id": id}))
+        .map(|(name, id, flags)| serde_json::json!({"name": name, "id": id, "flags": flags}))
         .collect();
     Ok(serde_json::json!({
         "stats": stats,
         "channels": channels,
     }))
+}
+
+#[tauri::command]
+fn cmd_get_channels(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Value, String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let channels = st.camera.read_dynamic_channels().map_err(|e| e.to_string())?;
+    let entries: Vec<serde_json::Value> = channels
+        .into_iter()
+        .map(|(name, data)| {
+            serde_json::json!({
+                "name": name,
+                "data": data,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!(entries))
 }
 
 #[tauri::command]
@@ -791,6 +807,7 @@ pub fn run() {
             cmd_get_sysinfo,
             cmd_get_memory,
             cmd_get_stats,
+            cmd_get_channels,
             cmd_run_script,
             cmd_stop_script,
             cmd_enable_streaming,

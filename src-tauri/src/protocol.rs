@@ -156,6 +156,9 @@ pub struct Packet {
 * Channel IOCTL Commands
 ***************************************************************************/
 
+// Channel flags (from omv_protocol_channel.h)
+pub const CHANNEL_FLAG_DYNAMIC: u8 = 1 << 5;
+
 pub mod ioctl {
     // stdin
     pub const STDIN_STOP: u32 = 0x01;

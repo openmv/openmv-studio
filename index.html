@@ -156,6 +156,7 @@
           <button class="tools-tab" data-tool="info">Info</button>
           <button class="tools-tab" data-tool="memory">Memory</button>
           <button class="tools-tab" data-tool="protocol">Protocol</button>
+          <button class="tools-tab" data-tool="channels">Channels</button>
         </div>
 
         <!-- Histogram tab -->
@@ -199,6 +200,18 @@
           </div>
           <div id="proto-content" class="proto-panel">
             <div style="padding:8px;color:var(--text-muted)">Connect to view protocol stats</div>
+          </div>
+        </div>
+
+        <!-- Channels tab -->
+        <div class="tools-body" data-tool="channels" style="display:none">
+          <div class="ch-poll-control">
+            <label class="ch-poll-label">Poll interval</label>
+            <input type="range" id="ch-poll-slider" min="100" max="1000" step="100" value="500" class="ch-poll-slider">
+            <span class="ch-poll-value" id="ch-poll-value">500 ms</span>
+          </div>
+          <div id="channels-content" class="channels-panel">
+            <div style="padding:8px;color:var(--text-muted)">Connect to view channels</div>
           </div>
         </div>
 

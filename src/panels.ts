@@ -2,6 +2,7 @@
 // examples tree, sidebar navigation, and board info tab.
 
 import { invoke } from "@tauri-apps/api/core";
+import { decode as cborDecode } from "cbor-x";
 import { state } from "./state";
 import { wglCtx, wglWidth, wglHeight } from "./gl";
 import { hideWelcome } from "./welcome";
@@ -43,6 +44,12 @@ export function initPanels() {
       } else {
         stopProtoPolling();
       }
+
+      if (tool === "channels") {
+        startChannelsPolling();
+      } else {
+        stopChannelsPolling();
+      }
     });
   });
 
@@ -72,6 +79,19 @@ export function initPanels() {
     }
   });
 
+  // Channels poll rate slider
+  const chSlider = document.getElementById("ch-poll-slider") as HTMLInputElement;
+  const chLabel = document.getElementById("ch-poll-value")!;
+
+  chSlider?.addEventListener("input", () => {
+    chPollInterval = parseInt(chSlider.value, 10);
+    chLabel.textContent = `${chPollInterval} ms`;
+
+    if (chPollTimer !== null) {
+      startChannelsPolling();
+    }
+  });
+
   initSidebar();
 }
 
@@ -87,6 +107,11 @@ export function isProtoTabActive(): boolean {
 
 export function isHistTabActive(): boolean {
   const tab = document.querySelector('.tools-tab[data-tool="histogram"]');
+  return tab?.classList.contains("active") || false;
+}
+
+export function isChannelsTabActive(): boolean {
+  const tab = document.querySelector('.tools-tab[data-tool="channels"]');
   return tab?.classList.contains("active") || false;
 }
 
@@ -539,6 +564,285 @@ function buildProtoDom(
 
   content.innerHTML = html;
   protoBuilt = true;
+}
+
+// --- Channels ---
+
+// SenML-compatible CBOR integer keys
+const CBOR_KEY_BN = -2;  // base name
+const CBOR_KEY_N = 0;    // name
+const CBOR_KEY_U = 1;    // unit
+const CBOR_KEY_V = 2;    // numeric value
+const CBOR_KEY_VS = 3;   // string value
+const CBOR_KEY_VB = 4;   // boolean value
+const CBOR_KEY_VD = 8;   // data value (binary)
+
+// Custom 2D data extension keys
+const CBOR_KEY_W = -20;    // width
+const CBOR_KEY_H = -21;    // height
+const CBOR_KEY_FMT = -22;  // format
+const CBOR_KEY_MIN = -23;  // min
+const CBOR_KEY_MAX = -24;  // max
+
+let chPollTimer: number | null = null;
+let chPollInFlight = false;
+let chPollInterval = 500;
+let chBuilt = false;
+
+export function startChannelsPolling() {
+  stopChannelsPolling();
+  fetchChannelsData();
+  chPollTimer = window.setInterval(fetchChannelsData, chPollInterval);
+}
+
+export function stopChannelsPolling() {
+  if (chPollTimer !== null) {
+    clearInterval(chPollTimer);
+    chPollTimer = null;
+  }
+}
+
+export function resetChannelsState() {
+  chBuilt = false;
+
+  const content = document.getElementById("channels-content");
+
+  if (content) {
+    content.innerHTML =
+      '<div style="padding:8px;color:var(--text-muted)">Connect to view channels</div>';
+  }
+}
+
+async function fetchChannelsData() {
+  if (!state.isConnected) {
+    return;
+  }
+
+  if (chPollInFlight) {
+    return;
+  }
+
+  chPollInFlight = true;
+
+  try {
+    const channels = await invoke<any[]>("cmd_get_channels");
+    const content = document.getElementById("channels-content");
+
+    if (!content) {
+      return;
+    }
+
+    if (!channels || channels.length === 0) {
+      content.innerHTML =
+        '<div style="padding:8px;color:var(--text-muted)">No custom channels</div>';
+      chBuilt = false;
+      return;
+    }
+
+    renderChannels(content, channels);
+    chBuilt = true;
+  } catch (e) {
+    console.error("channels poll error:", e);
+
+    const content = document.getElementById("channels-content");
+
+    if (content) {
+      content.innerHTML =
+        '<div style="padding:8px;color:var(--text-muted)">Failed to read channels</div>';
+    }
+
+    chBuilt = false;
+  } finally {
+    chPollInFlight = false;
+  }
+}
+
+function renderChannels(
+  content: HTMLElement,
+  channels: { name: string; data: number[] }[],
+) {
+  channels.sort((a, b) => a.name.localeCompare(b.name));
+  let html = "";
+
+  for (const ch of channels) {
+    html += `<div class="ch-channel-label">${ch.name}</div>`;
+
+    const bytes = new Uint8Array(ch.data);
+    let records: any[];
+
+    try {
+      records = cborDecode(bytes) as any[];
+    } catch {
+      html += '<div class="ch-record"><span class="ch-record-name">decode error</span></div>';
+      continue;
+    }
+
+    if (!Array.isArray(records)) {
+      html += '<div class="ch-record"><span class="ch-record-name">unexpected format</span></div>';
+      continue;
+    }
+
+    let baseName = "";
+
+    for (const rec of records) {
+      if (rec[CBOR_KEY_BN] !== undefined) {
+        baseName = rec[CBOR_KEY_BN];
+      }
+
+      const name = baseName + (rec[CBOR_KEY_N] || "");
+
+      if (rec[CBOR_KEY_V] !== undefined) {
+        // Scalar value
+        const val = rec[CBOR_KEY_V];
+        const unit = rec[CBOR_KEY_U] || "";
+        html += `<div class="ch-record">` +
+          `<span class="ch-record-name">${name}</span>` +
+          `<span><span class="ch-record-value">${typeof val === "number" ? val.toFixed(1) : val}</span>` +
+          `<span class="ch-record-unit">${unit}</span></span></div>`;
+      } else if (rec[CBOR_KEY_VS] !== undefined) {
+        // String value
+        html += `<div class="ch-record">` +
+          `<span class="ch-record-name">${name}</span>` +
+          `<span class="ch-record-value">${rec[CBOR_KEY_VS]}</span></div>`;
+      } else if (rec[CBOR_KEY_VB] !== undefined) {
+        // Boolean value
+        html += `<div class="ch-record">` +
+          `<span class="ch-record-name">${name}</span>` +
+          `<span class="ch-record-value">${rec[CBOR_KEY_VB] ? "true" : "false"}</span></div>`;
+      } else if (rec[CBOR_KEY_VD] !== undefined) {
+        // Binary data
+        const fmt = rec[CBOR_KEY_FMT];
+        const w = rec[CBOR_KEY_W];
+        const h = rec[CBOR_KEY_H];
+
+        if (fmt === "depth" && w && h) {
+          const vmin = rec[CBOR_KEY_MIN] || 0;
+          const vmax = rec[CBOR_KEY_MAX] || 1;
+          const id = `ch-depth-${name.replace(/[^a-zA-Z0-9]/g, "_")}`;
+          html += `<div class="ch-record" style="flex-direction:column;align-items:stretch">` +
+            `<span class="ch-record-name">${name} (${w}x${h}, ${vmin.toFixed(0)}-${vmax.toFixed(0)}mm)</span>` +
+            `<canvas class="ch-depth-canvas" id="${id}" width="${w}" height="${h}"></canvas></div>`;
+        } else if (fmt === "jpeg" || fmt === "rgb565" || fmt === "grayscale") {
+          html += `<div class="ch-record">` +
+            `<span class="ch-record-name">${name} (${fmt} ${w}x${h})</span></div>`;
+        } else {
+          const data = rec[CBOR_KEY_VD] as Uint8Array;
+          html += `<div class="ch-record">` +
+            `<span class="ch-record-name">${name}</span>` +
+            `<span class="ch-record-value">${data.length} bytes</span></div>`;
+        }
+      }
+    }
+  }
+
+  content.innerHTML = html;
+
+  // Second pass: draw depth canvases
+  for (const ch of channels) {
+    const bytes = new Uint8Array(ch.data);
+    let records: any[];
+
+    try {
+      records = cborDecode(bytes) as any[];
+    } catch {
+      continue;
+    }
+
+    if (!Array.isArray(records)) {
+      continue;
+    }
+
+    let baseName = "";
+
+    for (const rec of records) {
+      if (rec[CBOR_KEY_BN] !== undefined) {
+        baseName = rec[CBOR_KEY_BN];
+      }
+
+      if (rec[CBOR_KEY_VD] === undefined || rec[CBOR_KEY_FMT] !== "depth") {
+        continue;
+      }
+
+      const name = baseName + (rec[CBOR_KEY_N] || "");
+      const w = rec[CBOR_KEY_W];
+      const h = rec[CBOR_KEY_H];
+      const vmin = rec[CBOR_KEY_MIN] || 0;
+      const vmax = rec[CBOR_KEY_MAX] || 1;
+      const data = rec[CBOR_KEY_VD] as Uint8Array;
+      const id = `ch-depth-${name.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const canvas = document.getElementById(id) as HTMLCanvasElement | null;
+
+      if (canvas) {
+        drawDepthMap(canvas, data, w, h, vmin, vmax);
+      }
+    }
+  }
+}
+
+// Attempt to reproduce the Turbo colormap by Anton Mikhailov (Google).
+// 6-stop linear gradient: red (close) -> yellow -> green -> cyan -> blue -> dark blue (far).
+const TURBO_STOPS: [number, number, number, number][] = [
+  [0.00, 200, 36, 12],
+  [0.20, 252, 192, 12],
+  [0.40, 100, 236, 28],
+  [0.60, 24, 220, 180],
+  [0.80, 40, 120, 252],
+  [1.00, 24, 32, 112],
+];
+
+function turboColor(t: number): [number, number, number] {
+  let i = 0;
+
+  while (i < TURBO_STOPS.length - 2 && t > TURBO_STOPS[i + 1][0]) {
+    i++;
+  }
+
+  const [t0, r0, g0, b0] = TURBO_STOPS[i];
+  const [t1, r1, g1, b1] = TURBO_STOPS[i + 1];
+  const f = (t - t0) / (t1 - t0);
+
+  return [
+    Math.round(r0 + f * (r1 - r0)),
+    Math.round(g0 + f * (g1 - g0)),
+    Math.round(b0 + f * (b1 - b0)),
+  ];
+}
+
+function drawDepthMap(
+  canvas: HTMLCanvasElement,
+  data: Uint8Array,
+  w: number,
+  h: number,
+  vmin: number,
+  vmax: number,
+) {
+  const ctx = canvas.getContext("2d");
+
+  if (!ctx) {
+    return;
+  }
+
+  canvas.width = w;
+  canvas.height = h;
+
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const nFloats = data.byteLength >> 2;
+  const img = ctx.createImageData(w, h);
+  const range = vmax - vmin || 1;
+
+  for (let i = 0; i < nFloats && i < w * h; i++) {
+    const t = Math.max(0, Math.min(1, (dv.getFloat32(i * 4, true) - vmin) / range));
+
+    // Turbo-style palette: dark blue (close) -> cyan -> green -> yellow -> red (far)
+    const [r, g, b] = turboColor(t);
+
+    img.data[i * 4] = r;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = b;
+    img.data[i * 4 + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
 }
 
 // --- Histogram ---

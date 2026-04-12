@@ -51,6 +51,10 @@ import {
   populateSensorSelect,
   isMemTabActive,
   isProtoTabActive,
+  startChannelsPolling,
+  stopChannelsPolling,
+  resetChannelsState,
+  isChannelsTabActive,
 } from "./panels";
 import { initSettings, loadSettings, setUiScale, openSettings } from "./settings";
 
@@ -112,8 +116,10 @@ const editor = monaco.editor.create(document.getElementById("monaco-editor")!, {
   renderLineHighlight: "line",
   automaticLayout: true,
   padding: { top: 8, bottom: 8 },
-  glyphMargin: true,
+  glyphMargin: false,
   folding: true,
+  lineNumbersMinChars: 3,
+  lineDecorationsWidth: 5,
   cursorBlinking: "smooth",
   smoothScrolling: true,
   fixedOverflowWidgets: true,
@@ -238,7 +244,7 @@ function showException(msg: string) {
     domNode.textContent = errorLine.trim();
 
     exceptionZoneId = accessor.addZone({
-      afterLineNumber: lineNo,
+      afterLineNumber: Math.max(0, lineNo - 1),
       heightInLines: 1.4,
       domNode,
     });
@@ -420,8 +426,10 @@ async function doDisconnect() {
   stopPolling();
   stopMemPolling();
   stopProtoPolling();
+  stopChannelsPolling();
   resetMemState();
   resetProtoState();
+  resetChannelsState();
 
   try { await invoke("cmd_stop_script"); } catch {}
   try { await invoke("cmd_disconnect"); } catch {}
@@ -457,6 +465,8 @@ async function runScript() {
   if (!state.isConnected) {
     return;
   }
+
+  clearException();
 
   try {
     await sendStreaming();
@@ -705,6 +715,10 @@ function startPolling() {
 
   if (isProtoTabActive()) {
     startProtoPolling();
+  }
+
+  if (isChannelsTabActive()) {
+    startChannelsPolling();
   }
 }
 
