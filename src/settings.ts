@@ -91,6 +91,7 @@ export async function saveSettings() {
       toolsPct: toolsPct,
       pollInterval: state.pollIntervalMs,
       filterExamples: state.filterExamples,
+      splitLocked: state.splitLocked,
     });
 
     await s.set("editor", {
@@ -131,6 +132,7 @@ export async function loadSettings() {
       toolsPct?: number;
       pollInterval?: number;
       filterExamples?: boolean;
+      splitLocked?: boolean;
     }>("ui");
 
     if (ui?.scale) {
@@ -147,6 +149,11 @@ export async function loadSettings() {
 
     if (ui?.filterExamples !== undefined) {
       state.filterExamples = ui.filterExamples;
+    }
+
+    if (ui?.splitLocked) {
+      state.splitLocked = true;
+      document.getElementById("btn-lock-split")?.classList.add("active");
     }
 
     if (ui?.gridCols) {
@@ -491,6 +498,8 @@ function bindSettingsControls(overlay: HTMLElement) {
     state.uiScale = 1.2;
     state.currentThemeSetting = "dark";
     state.pollIntervalMs = 50;
+    state.splitLocked = false;
+    document.getElementById("btn-lock-split")?.classList.remove("active");
     setShortcutOverrides({});
 
     invoke("cmd_set_poll_interval", { intervalMs: state.pollIntervalMs });

@@ -12,6 +12,7 @@ export const state = {
   pollIntervalMs: 50,
   filterExamples: true,
   canvasVisible: false,
+  splitLocked: false,
   currentThemeSetting: "dark" as ThemeSetting,
 };
 

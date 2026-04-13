@@ -7,7 +7,7 @@ import { DataChannel } from "./channel";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { state } from "./state";
+import { state, scheduleSaveSettings } from "./state";
 import { initThemes, getEffectiveTheme, applyTheme } from "./theme";
 import { wglInit, wglDrawRgb565, wglDrawGrayscale, wglDrawBitmap } from "./gl";
 import { initResize } from "./resize";
@@ -167,6 +167,14 @@ document.getElementById("btn-clear-term")?.addEventListener("click", () => {
   if (el) {
     el.innerHTML = "";
   }
+});
+
+const lockBtn = document.getElementById("btn-lock-split");
+
+lockBtn?.addEventListener("click", () => {
+  state.splitLocked = !state.splitLocked;
+  lockBtn.classList.toggle("active", state.splitLocked);
+  scheduleSaveSettings();
 });
 
 // --- Zoom ---

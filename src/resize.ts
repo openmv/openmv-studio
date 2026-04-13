@@ -51,21 +51,41 @@ function initVerticalResize() {
     const startH = tp.getBoundingClientRect().height / state.uiScale;
     const maBottom = mainArea.getBoundingClientRect().bottom / state.uiScale;
 
+    // Capture fb/tools state for locked mode.
+    const rp = document.querySelector(".right-panel") as HTMLElement;
+    const fb = document.querySelector(".fb-section") as HTMLElement;
+    const tools = document.querySelector(".tools-panel") as HTMLElement;
+    const startFbH = fb.getBoundingClientRect().height / state.uiScale;
+    const rpH = rp.getBoundingClientRect().height / state.uiScale;
+    const fbHandleH = 4;
+
     const onMove = (ev: MouseEvent) => {
       const delta = startY - ev.clientY / state.uiScale;
       let h = Math.max(60, Math.min(600, startH + delta));
 
-      const termTop = maBottom - h;
-      const toolsTop = getToolsTopY();
+      if (!state.splitLocked) {
+        const termTop = maBottom - h;
+        const toolsTop = getToolsTopY();
 
-      if (Math.abs(termTop - toolsTop) < SNAP_PX) {
-        h = maBottom - toolsTop;
+        if (Math.abs(termTop - toolsTop) < SNAP_PX) {
+          h = maBottom - toolsTop;
+        }
       }
 
       const maH = mainArea.getBoundingClientRect().height / state.uiScale;
       const pct = (h / maH) * 100;
 
       mainArea.style.gridTemplateRows = `32px 1fr 4px ${pct}%`;
+
+      if (state.splitLocked) {
+        const fbH = Math.max(80, Math.min(rpH - fbHandleH - 80,
+          startFbH - delta));
+        const toolsH = rpH - fbH - fbHandleH;
+        fb.style.flex = "none";
+        tools.style.flex = "none";
+        fb.style.height = (fbH / rpH) * 100 + "%";
+        tools.style.height = (toolsH / rpH) * 100 + "%";
+      }
     };
 
     const onUp = () => {
@@ -107,16 +127,23 @@ function initFbToolsResize() {
     const vpW = (fb.querySelector(".fb-viewport")
       ?.getBoundingClientRect().width ?? 0) / state.uiScale;
 
+    // Capture terminal state for locked mode.
+    const tp = document.querySelector(".terminal-panel") as HTMLElement;
+    const startTermH = tp.getBoundingClientRect().height / state.uiScale;
+    const maH = mainArea.getBoundingClientRect().height / state.uiScale;
+
     const onMove = (e: MouseEvent) => {
       const delta = e.clientY / state.uiScale - startY;
       let fbH = Math.max(80, Math.min(rpH - handleH - 80, startFbH + delta));
 
-      // Snap to terminal alignment
-      const toolsTop = rpTop + fbH + handleH;
-      const termTop = getTerminalTopY();
+      if (!state.splitLocked) {
+        // Snap to terminal alignment
+        const toolsTop = rpTop + fbH + handleH;
+        const termTop = getTerminalTopY();
 
-      if (Math.abs(toolsTop - termTop) < SNAP_PX) {
-        fbH = termTop - rpTop - handleH;
+        if (Math.abs(toolsTop - termTop) < SNAP_PX) {
+          fbH = termTop - rpTop - handleH;
+        }
       }
 
       // Snap to frame aspect ratio (no black bars)
@@ -140,6 +167,12 @@ function initFbToolsResize() {
       tools.style.flex = "none";
       fb.style.height = fbPct + "%";
       tools.style.height = toolsPct + "%";
+
+      if (state.splitLocked) {
+        const termH = Math.max(60, Math.min(600, startTermH - delta));
+        const pct = (termH / maH) * 100;
+        mainArea.style.gridTemplateRows = `32px 1fr 4px ${pct}%`;
+      }
     };
 
     const onUp = () => {

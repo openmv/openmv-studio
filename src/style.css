@@ -333,6 +333,7 @@ body {
   cursor: pointer; color: var(--text-tertiary);
 }
 .term-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.term-btn.active { color: var(--accent-blue); }
 .terminal-content {
   flex: 1; overflow: auto; padding: 8px 12px;
   font-family: var(--font-code); font-size: 12px; line-height: 1.6; color: var(--text-secondary);
