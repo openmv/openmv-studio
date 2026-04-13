@@ -282,7 +282,7 @@ export async function registerCompletions(
   // Initialize LSP with stubs pre-loaded via initializationOptions.files.
   // This writes files to the TestFileSystem during initialize AND passes
   // them to the background analysis thread via initializeFileSystem.
-  const initResult = await connection.sendRequest("initialize", {
+  await connection.sendRequest("initialize", {
     processId: null,
     rootUri: "file:///",
     initializationOptions: {

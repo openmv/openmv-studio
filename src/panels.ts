@@ -194,9 +194,15 @@ export function stopMemPolling() {
   memChannel.reset();
 }
 
+export function resetMemGraphCache() {
+  cachedBgDeep = "";
+  cachedFont = "";
+}
+
 export function resetMemState() {
   memHistory.clear();
   memPeak.clear();
+  resetMemGraphCache();
 
   const content = document.getElementById("memory-content");
 
@@ -312,6 +318,10 @@ function renderMemEntry(e: any, i: number): string {
   );
 }
 
+// Cached style values to avoid getComputedStyle per frame.
+let cachedBgDeep = "";
+let cachedFont = "";
+
 function drawMemGraph(
   canvas: HTMLCanvasElement,
   history: { used: number; total: number }[],
@@ -333,15 +343,25 @@ function drawMemGraph(
     ctx.clearRect(0, 0, w, h);
   }
 
-  ctx.fillStyle =
-    getComputedStyle(canvas).getPropertyValue("--bg-deep").trim() || "#0a0a0c";
+  if (!cachedBgDeep) {
+    const cs = getComputedStyle(canvas);
+    cachedBgDeep = cs.getPropertyValue("--bg-deep").trim() || "#0a0a0c";
+    cachedFont = "9px " + (cs.fontFamily || "monospace");
+  }
+
+  ctx.fillStyle = cachedBgDeep;
   ctx.fillRect(0, 0, w, h);
 
   if (history.length < 2) {
     return;
   }
 
-  const maxTotal = Math.max(...history.map((s) => s.total));
+  let maxTotal = 0;
+  for (let i = 0; i < history.length; i++) {
+    if (history[i].total > maxTotal) {
+      maxTotal = history[i].total;
+    }
+  }
 
   if (maxTotal === 0) {
     return;
@@ -378,45 +398,35 @@ function drawMemGraph(
 
   ctx.stroke();
 
-  // Used fill
-  ctx.beginPath();
+  // Build used path once, use for both fill and stroke.
+  const usedPath = new Path2D();
+  const fillPath = new Path2D();
+  let lastX = 0;
 
   for (let i = 0; i < history.length; i++) {
     const x = (i / (MEM_HISTORY_MAX - 1)) * w;
     const y = h - (history[i].used / maxTotal) * h;
 
     if (i === 0) {
-      ctx.moveTo(x, y);
+      usedPath.moveTo(x, y);
+      fillPath.moveTo(x, y);
     } else {
-      ctx.lineTo(x, y);
+      usedPath.lineTo(x, y);
+      fillPath.lineTo(x, y);
     }
+    lastX = x;
   }
 
-  const lastX = ((history.length - 1) / (MEM_HISTORY_MAX - 1)) * w;
+  fillPath.lineTo(lastX, h);
+  fillPath.lineTo(0, h);
+  fillPath.closePath();
 
-  ctx.lineTo(lastX, h);
-  ctx.lineTo(0, h);
-  ctx.closePath();
   ctx.fillStyle = "rgba(91,156,245,0.2)";
-  ctx.fill();
+  ctx.fill(fillPath);
 
-  // Used line
   ctx.strokeStyle = "#5b9cf5";
   ctx.lineWidth = 1.5;
-  ctx.beginPath();
-
-  for (let i = 0; i < history.length; i++) {
-    const x = (i / (MEM_HISTORY_MAX - 1)) * w;
-    const y = h - (history[i].used / maxTotal) * h;
-
-    if (i === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
-  }
-
-  ctx.stroke();
+  ctx.stroke(usedPath);
 
   // Peak line
   if (peak > 0 && peak < maxTotal * 0.95) {
@@ -432,7 +442,7 @@ function drawMemGraph(
     ctx.setLineDash([]);
 
     ctx.fillStyle = "rgba(240,85,85,0.7)";
-    ctx.font = "9px " + (getComputedStyle(canvas).fontFamily || "monospace");
+    ctx.font = cachedFont;
     ctx.textAlign = "right";
     ctx.fillText("peak", w - 2, peakY - 3);
     ctx.textAlign = "start";

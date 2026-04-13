@@ -3,6 +3,7 @@
 
 import * as monaco from "monaco-editor";
 import { state, scheduleSaveSettings } from "./state";
+import { resetMemGraphCache } from "./panels";
 
 const DARK_THEME: monaco.editor.IStandaloneThemeData = {
   base: "vs-dark",
@@ -104,5 +105,6 @@ export function applyTheme(setting: typeof state.currentThemeSetting) {
 
   document.documentElement.setAttribute("data-theme", effective);
   monaco.editor.setTheme(effective === "dark" ? "openmv-dark" : "openmv-light");
+  resetMemGraphCache();
   scheduleSaveSettings();
 }
