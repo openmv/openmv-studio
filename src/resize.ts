@@ -3,6 +3,7 @@
 // and vertical (framebuffer/tools) splits with snap-to-align behavior.
 
 import { state, scheduleSaveSettings } from "./state";
+import { wglWidth, wglHeight } from "./gl";
 
 // Distance in pixels at which panels snap to align
 const SNAP_PX = 15;
@@ -101,14 +102,33 @@ function initFbToolsResize() {
     const rpTop = rp.getBoundingClientRect().top / state.uiScale;
     const handleH = 4;
 
+    const headerH = (fb.querySelector(".fb-header")
+      ?.getBoundingClientRect().height ?? 0) / state.uiScale;
+    const vpW = (fb.querySelector(".fb-viewport")
+      ?.getBoundingClientRect().width ?? 0) / state.uiScale;
+
     const onMove = (e: MouseEvent) => {
       const delta = e.clientY / state.uiScale - startY;
       let fbH = Math.max(80, Math.min(rpH - handleH - 80, startFbH + delta));
+
+      // Snap to terminal alignment
       const toolsTop = rpTop + fbH + handleH;
       const termTop = getTerminalTopY();
 
       if (Math.abs(toolsTop - termTop) < SNAP_PX) {
         fbH = termTop - rpTop - handleH;
+      }
+
+      // Snap to frame aspect ratio (no black bars)
+      const fW = wglWidth();
+      const fH = wglHeight();
+
+      if (fW > 0 && fH > 0 && vpW > 0) {
+        const fitH = (vpW / fW) * fH + headerH;
+
+        if (Math.abs(fbH - fitH) < SNAP_PX) {
+          fbH = fitH;
+        }
       }
 
       const toolsH = rpH - fbH - handleH;
