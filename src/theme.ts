@@ -63,15 +63,15 @@ const LIGHT_THEME: monaco.editor.IStandaloneThemeData = {
     { token: "delimiter", foreground: "24292e" },
   ],
   colors: {
-    "editor.background": "#f8f8fa",
+    "editor.background": "#f5f5f7",
     "editor.foreground": "#1a1a1e",
-    "editor.lineHighlightBackground": "#2b7cf508",
-    "editor.selectionBackground": "#2b7cf530",
-    "editorLineNumber.foreground": "#b0b0b8",
-    "editorLineNumber.activeForeground": "#8a8a94",
-    "editorCursor.foreground": "#2b7cf5",
-    "scrollbarSlider.background": "#00000014",
-    "scrollbarSlider.hoverBackground": "#0000001f",
+    "editor.lineHighlightBackground": "#2670e00a",
+    "editor.selectionBackground": "#2670e030",
+    "editorLineNumber.foreground": "#9a9aa4",
+    "editorLineNumber.activeForeground": "#6e6e7a",
+    "editorCursor.foreground": "#2670e0",
+    "scrollbarSlider.background": "#00000018",
+    "scrollbarSlider.hoverBackground": "#00000028",
   },
 };
 
