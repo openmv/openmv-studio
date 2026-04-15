@@ -14,6 +14,7 @@ export const state = {
   canvasVisible: false,
   splitLocked: false,
   currentThemeSetting: "dark" as ThemeSetting,
+  serialPort: "" as string,
 };
 
 // Callback slot -- settings.ts fills this during init.

@@ -391,6 +391,45 @@ function bindSettingsControls(overlay: HTMLElement) {
     scheduleSaveSettings();
   };
 
+  // Serial port
+  const serialAuto = document.getElementById("set-serial-auto") as HTMLInputElement;
+  const serialRow = document.getElementById("serial-port-row") as HTMLElement;
+  const serialSelect = document.getElementById("set-serial-port") as HTMLSelectElement;
+
+  if (serialAuto && serialSelect) {
+    serialAuto.onchange = () => {
+      if (serialAuto.checked) {
+        serialRow.style.display = "none";
+        state.serialPort = "";
+      } else {
+        serialRow.style.display = "";
+        state.serialPort = serialSelect.value || "";
+      }
+    };
+
+    serialSelect.onchange = () => {
+      state.serialPort = serialSelect.value;
+    };
+
+    // Populate the dropdown
+    invoke<string[]>("cmd_list_ports", { all: true }).then((ports) => {
+      serialSelect.innerHTML = "";
+
+      for (const p of ports) {
+        const opt = document.createElement("option");
+
+        opt.value = p;
+        opt.textContent = p;
+
+        if (p === state.serialPort) {
+          opt.selected = true;
+        }
+
+        serialSelect.appendChild(opt);
+      }
+    }).catch(() => {});
+  }
+
   // Poll rate
   const pollSlider = document.getElementById("set-poll-rate") as HTMLInputElement;
   const pollLabel = document.getElementById("poll-rate-label")!;
@@ -528,6 +567,8 @@ function buildSettingsHtml(): string {
     .replace("{{scalePercent}}", String(scalePercent))
     .replace("{{scalePercent2}}", String(scalePercent))
     .replace("{{fontSize}}", String(fontSize))
+    .replace("{{serialAutoChecked}}", state.serialPort ? "" : "checked")
+    .replace("{{serialPortRowDisplay}}", state.serialPort ? "" : "display:none")
     .replace("{{pollInterval}}", String(state.pollIntervalMs))
     .replace("{{pollInterval2}}", String(state.pollIntervalMs))
     .replace("{{lightChecked}}", state.currentThemeSetting === "light" ? "checked" : "")
@@ -629,6 +670,14 @@ const SETTINGS_HTML = `
     </div>
 
     <div class="settings-pane" data-stab="connection" style="display:none">
+      <div class="pref-row">
+        <span class="pref-label">Auto-detect Port</span>
+        <label class="switch"><input type="checkbox" id="set-serial-auto" {{serialAutoChecked}}><span class="switch-slider"></span></label>
+      </div>
+      <div class="pref-row" id="serial-port-row" style="{{serialPortRowDisplay}}">
+        <span class="pref-label">Serial Port</span>
+        <select class="pref-input" id="set-serial-port" style="width:200px"></select>
+      </div>
       <div class="pref-row">
         <span class="pref-label">Poll Rate</span>
         <div class="scale-control">

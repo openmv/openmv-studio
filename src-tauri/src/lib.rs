@@ -82,12 +82,17 @@ fn cmd_open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn cmd_list_ports(state: State<Arc<Mutex<AppState>>>) -> Vec<String> {
+fn cmd_list_ports(all: Option<bool>, state: State<Arc<Mutex<AppState>>>) -> Vec<String> {
     let st = state.lock().unwrap();
+    let all = all.unwrap_or(false);
     serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
+        .filter(|p| !p.port_name.contains("/tty."))
         .filter(|p| {
+            if all {
+                return true;
+            }
             if let serialport::SerialPortType::UsbPort(info) = &p.port_type {
                 st.boards.iter().any(|b| b.vid == info.vid && b.pid == info.pid)
             } else {
@@ -106,7 +111,6 @@ fn cmd_connect(port: String, state: State<Arc<Mutex<AppState>>>) -> Result<(), S
     let old_thread = st.poll_thread.take();
     drop(st);
 
-    // Wait for the old poll thread to finish before touching the serial port.
     if let Some(handle) = old_thread {
         let _ = handle.join();
     }

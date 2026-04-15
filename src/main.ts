@@ -394,14 +394,20 @@ async function doConnect() {
   connectInProgress = true;
 
   try {
-    const ports = await invoke<string[]>("cmd_list_ports");
+    let port = state.serialPort;
 
-    if (ports.length === 0) {
-      termLog("No serial ports found.", "error-line");
-      return;
+    if (!port) {
+      const ports = await invoke<string[]>("cmd_list_ports");
+
+      if (ports.length === 0) {
+        termLog("No serial ports found.", "error-line");
+        return;
+      }
+
+      port = ports[0];
     }
 
-    await invoke("cmd_connect", { port: ports[0] });
+    await invoke("cmd_connect", { port });
 
     const sysinfo = await invoke<any>("cmd_get_sysinfo");
     const version = await invoke<any>("cmd_get_version");
@@ -409,13 +415,17 @@ async function doConnect() {
 
     state.connectedBoard = sysinfo.board_type;
     state.connectedSensor = null;
-    setConnected(true, `${sysinfo.board_name} | ${ports[0]} | v${fw}`);
+    setConnected(true, `${sysinfo.board_name} | ${port} | v${fw}`);
     populateSensorSelect(sysinfo.sensors || []);
-    populateInfoTab(sysinfo, version, ports[0]);
+    populateInfoTab(sysinfo, version, port);
 
-    try { await invoke("cmd_stop_script"); } catch {}
+    try {
+      await invoke("cmd_stop_script");
+    } catch {}
 
-    try { await sendStreaming(); } catch {}
+    try {
+      await sendStreaming();
+    } catch {}
 
     startPolling();
 
