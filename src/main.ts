@@ -54,6 +54,7 @@ import {
   startChannelsPolling,
   stopChannelsPolling,
   resetChannelsState,
+  clearChannelsCache,
   isChannelsTabActive,
   handleMemoryData,
   handleStatsData,
@@ -317,6 +318,11 @@ function setScriptRunning(running: boolean) {
   btnRunStop.title = running ? "Stop (Cmd+R)" : "Run (Cmd+R)";
   iconPlay.style.display = running ? "none" : "";
   iconStop.style.display = running ? "" : "none";
+
+  if (!running) {
+    stopChannelsPolling();
+    clearChannelsCache();
+  }
 
   if (runStopLabel) {
     runStopLabel.textContent = running ? "Stop" : "Run";
@@ -732,7 +738,7 @@ function handleWorkerMessage(raw: ArrayBuffer) {
       handleChannelsData(payload);
       break;
     case 0x10:
-      handleSoftReboot();
+      setScriptRunning(false);
       break;
     case 0x12:
       handleDisconnected();
@@ -804,10 +810,6 @@ function handleFrame(raw: ArrayBuffer) {
   new Uint8Array(frameBuf, 0, dataLen).set(new Uint8Array(raw, 16, dataLen));
   pendingFrame = { format, width, height, dataLen };
   scheduleRender();
-}
-
-function handleSoftReboot() {
-  setScriptRunning(false);
 }
 
 function handleDisconnected() {

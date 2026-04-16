@@ -702,6 +702,11 @@ export function stopChannelsPolling() {
   }
 }
 
+export function clearChannelsCache() {
+  dynamicChannels = [];
+  channelCache.clear();
+}
+
 export function resetChannelsState() {
   dynamicChannels = [];
   channelCache.clear();
