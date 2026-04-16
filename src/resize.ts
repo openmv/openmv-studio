@@ -78,8 +78,9 @@ function initVerticalResize() {
       mainArea.style.gridTemplateRows = `32px 1fr 4px ${pct}%`;
 
       if (state.splitLocked) {
+        const actualDelta = h - startH;
         const fbH = Math.max(80, Math.min(rpH - fbHandleH - 80,
-          startFbH - delta));
+          startFbH - actualDelta));
         const toolsH = rpH - fbH - fbHandleH;
         fb.style.flex = "none";
         tools.style.flex = "none";
@@ -169,7 +170,8 @@ function initFbToolsResize() {
       tools.style.height = toolsPct + "%";
 
       if (state.splitLocked) {
-        const termH = Math.max(60, Math.min(600, startTermH - delta));
+        const actualDelta = fbH - startFbH;
+        const termH = Math.max(60, Math.min(600, startTermH - actualDelta));
         const pct = (termH / maH) * 100;
         mainArea.style.gridTemplateRows = `32px 1fr 4px ${pct}%`;
       }

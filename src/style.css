@@ -486,6 +486,15 @@ body {
 .status-item .val { color: var(--text-secondary); font-weight: 500; }
 .status-sep { width: 1px; height: 12px; background: var(--border-mid); }
 
+/* Connect button breathes while data is flowing */
+#btn-connect.connected.alive svg { animation: btn-pulse 1.5s ease-in-out infinite; }
+#btn-connect.connected:not(.alive) svg { opacity: 0.5; transition: opacity 1s; }
+
+@keyframes btn-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* ---- SETTINGS DIALOG (macOS-style) ---- */
 .settings-overlay {
   position: fixed; inset: 0; z-index: 9999;

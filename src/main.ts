@@ -304,6 +304,11 @@ function setConnected(connected: boolean, info: string = "Disconnected") {
 
   if (!connected) {
     setScriptRunning(false);
+    clearTimeout(staleTimer);
+
+    if (btnConnect) {
+      btnConnect.classList.remove("alive");
+    }
   }
 }
 
@@ -672,10 +677,31 @@ function showCanvas(format: number) {
 
 let workerChannel: Channel<ArrayBuffer> | null = null;
 
+// Liveness: run/stop button breathes while data is flowing
+let staleTimer = 0;
+const STALE_THRESHOLD = 3000;
+
+function tickActivity() {
+  const btn = document.getElementById("btn-connect");
+
+  if (btn) {
+    btn.classList.add("alive");
+  }
+
+  clearTimeout(staleTimer);
+  staleTimer = window.setTimeout(() => {
+    if (btn) {
+      btn.classList.remove("alive");
+    }
+  }, STALE_THRESHOLD);
+}
+
 function handleWorkerMessage(raw: ArrayBuffer) {
   if (raw.byteLength < 1 || !state.isConnected) {
     return;
   }
+
+  tickActivity();
 
   const tag = new Uint8Array(raw)[0];
   const payload = raw.slice(1);
