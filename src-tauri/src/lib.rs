@@ -2,7 +2,7 @@ mod camera;
 mod protocol;
 mod transport;
 
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tauri::ipc::Channel;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
@@ -56,17 +56,22 @@ fn load_boards(app: &tauri::AppHandle) -> Vec<Board> {
     let Some(entries) = json.as_ref().and_then(|j| j["boards"].as_array()) else {
         return vec![];
     };
-    entries.iter().filter_map(|b| {
-        let vid = parse_hex16(b["vid"].as_str()?);
-        let pid = parse_hex16(b["pid"].as_str()?);
-        if vid == 0 { return None; }
-        Some(Board {
-            vid,
-            pid,
-            board_type: b["type"].as_str().unwrap_or("Unknown").to_string(),
-            display: b["display"].as_str().unwrap_or("Unknown").to_string(),
+    entries
+        .iter()
+        .filter_map(|b| {
+            let vid = parse_hex16(b["vid"].as_str()?);
+            let pid = parse_hex16(b["pid"].as_str()?);
+            if vid == 0 {
+                return None;
+            }
+            Some(Board {
+                vid,
+                pid,
+                board_type: b["type"].as_str().unwrap_or("Unknown").to_string(),
+                display: b["display"].as_str().unwrap_or("Unknown").to_string(),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn load_sensors(app: &tauri::AppHandle) -> serde_json::Value {
@@ -95,7 +100,9 @@ fn cmd_list_ports(all: Option<bool>, state: State<Arc<Mutex<AppState>>>) -> Vec<
                 return true;
             }
             if let serialport::SerialPortType::UsbPort(info) = &p.port_type {
-                st.boards.iter().any(|b| b.vid == info.vid && b.pid == info.pid)
+                st.boards
+                    .iter()
+                    .any(|b| b.vid == info.vid && b.pid == info.pid)
             } else {
                 false
             }
@@ -204,15 +211,22 @@ fn cmd_get_sysinfo(state: State<Arc<Mutex<AppState>>>) -> Result<serde_json::Val
 }
 
 fn lookup_board(boards: &[Board], vid: u16, pid: u16) -> (String, String) {
-    boards.iter()
+    boards
+        .iter()
         .find(|b| b.vid == vid && b.pid == pid)
         .map(|b| (b.board_type.clone(), b.display.clone()))
-        .unwrap_or_else(|| (format!("{:04X}:{:04X}", vid, pid), "Unknown Board".to_string()))
+        .unwrap_or_else(|| {
+            (
+                format!("{:04X}:{:04X}", vid, pid),
+                "Unknown Board".to_string(),
+            )
+        })
 }
 
 fn lookup_sensor(sensors: &serde_json::Value, chip_id: u32) -> String {
     let key = format!("0x{:X}", chip_id);
-    sensors["sensors"][&key].as_str()
+    sensors["sensors"][&key]
+        .as_str()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("Unknown (0x{:X})", chip_id))
 }
@@ -256,7 +270,11 @@ fn cmd_bootloader(state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn cmd_enable_streaming(enable: bool, raw: bool, state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
+fn cmd_enable_streaming(
+    enable: bool,
+    raw: bool,
+    state: State<Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
     let st = state.lock().map_err(|e| e.to_string())?;
     if let Some(ref tx) = st.cmd_tx {
         let _ = tx.send(Command::EnableStreaming { enable, raw });
@@ -421,8 +439,12 @@ fn cmd_list_examples(
             }
         }
         items.sort_by(|a, b| {
-            let ka = a["sort_key"].as_str().unwrap_or(a["name"].as_str().unwrap_or(""));
-            let kb = b["sort_key"].as_str().unwrap_or(b["name"].as_str().unwrap_or(""));
+            let ka = a["sort_key"]
+                .as_str()
+                .unwrap_or(a["name"].as_str().unwrap_or(""));
+            let kb = b["sort_key"]
+                .as_str()
+                .unwrap_or(b["name"].as_str().unwrap_or(""));
             ka.to_ascii_lowercase().cmp(&kb.to_ascii_lowercase())
         });
         items
@@ -566,9 +588,9 @@ fn find_submenu_by_id(
 
 #[tauri::command]
 fn cmd_update_recent_menu(paths: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
-    let menu = app.menu().or_else(|| {
-        app.get_webview_window("main").and_then(|w| w.menu())
-    });
+    let menu = app
+        .menu()
+        .or_else(|| app.get_webview_window("main").and_then(|w| w.menu()));
 
     let Some(menu) = menu else {
         log::warn!("No menu found");
@@ -594,29 +616,36 @@ fn cmd_update_recent_menu(paths: Vec<String>, app: tauri::AppHandle) -> Result<(
     }
 
     if paths.is_empty() {
-        recent.append(
-            &MenuItemBuilder::with_id("recent-none", "(No recent files)")
-                .enabled(false)
-                .build(&app)
-                .map_err(|e| e.to_string())?,
-        ).map_err(|e| e.to_string())?;
+        recent
+            .append(
+                &MenuItemBuilder::with_id("recent-none", "(No recent files)")
+                    .enabled(false)
+                    .build(&app)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
     } else {
         for (i, path) in paths.iter().enumerate() {
             let label = path.rsplit('/').next().unwrap_or(path);
-            recent.append(
-                &MenuItemBuilder::with_id(format!("recent:{}", i), label)
-                    .build(&app)
-                    .map_err(|e| e.to_string())?,
-            ).map_err(|e| e.to_string())?;
+            recent
+                .append(
+                    &MenuItemBuilder::with_id(format!("recent:{}", i), label)
+                        .build(&app)
+                        .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
         }
 
-        recent.append(&tauri::menu::PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?)
+        recent
+            .append(&tauri::menu::PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-        recent.append(
-            &MenuItemBuilder::with_id("recent-clear", "Clear Recent Files")
-                .build(&app)
-                .map_err(|e| e.to_string())?,
-        ).map_err(|e| e.to_string())?;
+        recent
+            .append(
+                &MenuItemBuilder::with_id("recent-clear", "Clear Recent Files")
+                    .build(&app)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(())

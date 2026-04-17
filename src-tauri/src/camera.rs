@@ -75,6 +75,7 @@ pub struct Camera {
     transport: Option<Transport>,
     channels: HashMap<String, ChannelInfo>,
     event_counts: HashMap<u8, u32>,
+    queue: VecDeque<Command>,
     max_payload: usize,
     pub sysinfo: Option<SystemInfo>,
     pub verinfo: Option<VersionInfo>,
@@ -92,6 +93,7 @@ impl Camera {
             transport: None,
             channels: HashMap::new(),
             event_counts: HashMap::new(),
+            queue: VecDeque::new(),
             max_payload: 4096,
             sysinfo: None,
             verinfo: None,
@@ -126,187 +128,9 @@ impl Camera {
         self.event_counts.clear();
     }
 
-    // -- Worker loop --
-    pub fn run(&mut self, rx: mpsc::Receiver<Command>, tx: &Channel, poll_interval: Duration) {
-        let mut queue: VecDeque<Command> = VecDeque::new();
-
-        loop {
-            // Drain incoming commands, dedup idempotent ones
-            while let Ok(cmd) = rx.try_recv() {
-                enqueue(&mut queue, cmd);
-            }
-
-            if !queue.is_empty() {
-                let cmd = queue.pop_front().unwrap();
-                if matches!(cmd, Command::Disconnect) {
-                    break;
-                }
-                let events = self.execute(cmd, tx);
-                for c in events {
-                    enqueue(&mut queue, c);
-                }
-            } else {
-                self.recv_events(poll_interval);
-                let events = self.map_events(tx);
-                for c in events {
-                    enqueue(&mut queue, c);
-                }
-            }
-
-            if !self.is_connected() {
-                let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_DISCONNECTED]));
-                break;
-            }
-        }
-    }
-
-    fn execute(&mut self, cmd: Command, tx: &Channel) -> Vec<Command> {
-        let result = match &cmd {
-            Command::RunScript(script) => self.exec_script(script),
-            Command::StopScript => self.stop_script(),
-            Command::EnableStreaming { enable, raw } => self.enable_streaming(*enable, *raw),
-            Command::SetStreamSource(chip_id) => self.set_stream_source(*chip_id),
-            Command::GetMemory => self.do_get_memory(tx),
-            Command::GetStats => self.do_get_stats(tx),
-            Command::ReadChannel(id) => self.do_read_channel(*id, tx),
-            Command::ReadStdout => self.do_read_stdout(tx),
-            Command::ReadFrame => self.do_read_frame(tx),
-            Command::UpdateChannels => {
-                let _ = self.update_channels();
-                Ok(())
-            }
-            Command::Reset => self.do_reset(Opcode::SysReset),
-            Command::Bootloader => self.do_reset(Opcode::SysBoot),
-            Command::Disconnect => unreachable!(),
-        };
-
-        if let Err(e) = result {
-            log::warn!("execute({:?}): {}", cmd, e);
-            let mut buf = vec![TAG_ERROR];
-            buf.extend_from_slice(e.to_string().as_bytes());
-            let _ = tx.send(InvokeResponseBody::Raw(buf));
-        }
-
-        self.map_events(tx)
-    }
-
-    fn recv_events(&mut self, timeout: Duration) {
-        let t = match self.transport.as_mut() {
-            Some(t) => t,
-            None => return,
-        };
-
-        let saved = t.get_timeout();
-        t.set_timeout(timeout);
-
-        // recv_packet buffers events internally; we just need to trigger a
-        // receive attempt so the transport has a chance to collect them.
-        match t.recv_packet() {
-            Ok(_) => {} // unexpected non-event, drop it
-            Err(TransportError::Timeout) => {}
-            Err(e) => log::warn!("recv_events: {}", e),
-        }
-
-        t.set_timeout(saved);
-    }
-
-    fn map_events(&mut self, tx: &Channel) -> Vec<Command> {
-        let events = match self.transport.as_mut() {
-            Some(t) => t.drain_events(),
-            None => vec![],
-        };
-        let mut commands = Vec::new();
-
-        for packet in events {
-            *self.event_counts.entry(packet.channel).or_insert(0) += 1;
-
-            if packet.channel == 0 {
-                // System event on channel 0
-                if let Some(ref payload) = packet.payload {
-                    if payload.len() >= 2 {
-                        let event_type = u16::from_le_bytes([payload[0], payload[1]]);
-                        match event_type {
-                            0x00 => commands.push(Command::UpdateChannels),
-                            0x02 => {
-                                let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_SOFT_REBOOT]));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            } else {
-                // Data event -- map channel ID to name/flags
-                let info = self
-                    .channels
-                    .iter()
-                    .find(|(_, ci)| ci.id == packet.channel)
-                    .map(|(name, ci)| (name.clone(), ci.flags));
-
-                match info.as_ref().map(|(n, _)| n.as_str()) {
-                    Some("stdout") => commands.push(Command::ReadStdout),
-                    Some("stream") => commands.push(Command::ReadFrame),
-                    _ => {
-                        if let Some((_, flags)) = info {
-                            if flags & CHANNEL_FLAG_DYNAMIC != 0 {
-                                commands.push(Command::ReadChannel(packet.channel));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        commands
-    }
-
     // -- Protocol primitives --
-
     fn transport(&mut self) -> Result<&mut Transport, TransportError> {
         self.transport.as_mut().ok_or(TransportError::NotConnected)
-    }
-
-    /// Receive one response. Events are buffered by the transport automatically.
-    fn recv_response(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
-        let packet = self.transport()?.recv_packet()?;
-        if packet.flags.contains(PacketFlags::NAK) {
-            let status = packet
-                .payload
-                .as_ref()
-                .and_then(|p| {
-                    if p.len() >= 2 {
-                        Status::from_u16(u16::from_le_bytes([p[0], p[1]]))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(Status::Failed);
-            return Err(TransportError::Nak(status));
-        }
-        Ok(packet.payload)
-    }
-
-    fn cmd(
-        &mut self,
-        opcode: Opcode,
-        channel: u8,
-        data: Option<&[u8]>,
-        resync: bool,
-    ) -> Result<Option<Vec<u8>>, TransportError> {
-        self.transport()?
-            .send_packet(opcode, channel, PacketFlags::empty(), data)?;
-        match self.recv_response() {
-            Ok(r) => Ok(r),
-            Err(TransportError::Checksum | TransportError::Sequence | TransportError::Timeout)
-                if resync =>
-            {
-                log::warn!("Protocol error, resyncing...");
-                self.resync()?;
-                self.transport()?
-                    .send_packet(opcode, channel, PacketFlags::empty(), data)?;
-                self.recv_response()
-            }
-            Err(e) => Err(e),
-        }
     }
 
     fn resync(&mut self) -> Result<(), TransportError> {
@@ -318,7 +142,7 @@ impl Camera {
         for attempt in 0..3 {
             self.transport()?
                 .send_packet(Opcode::ProtoSync, 0, PacketFlags::empty(), None)?;
-            match self.transport()?.recv_packet() {
+            match self.transport()?.recv_packet(None) {
                 Ok(_) => {
                     self.transport()?.reset_sequence();
                     return self.negotiate_caps();
@@ -333,9 +157,45 @@ impl Camera {
         Err(TransportError::Timeout)
     }
 
+    fn send_cmd(
+        &mut self,
+        opcode: Opcode,
+        channel: u8,
+        data: Option<&[u8]>,
+        resync: bool,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
+        for attempt in 0..2 {
+            self.transport()?
+                .send_packet(opcode, channel, PacketFlags::empty(), data)?;
+
+            let result = self.transport()?.recv_packet(None).and_then(|packet| {
+                if packet.flags.contains(PacketFlags::NAK) {
+                    let p = packet.payload.as_ref().unwrap();
+                    let status = Status::from_u16(u16::from_le_bytes([p[0], p[1]]))
+                        .unwrap_or(Status::Failed);
+                    Err(TransportError::Nak(status))
+                } else {
+                    Ok(packet.payload)
+                }
+            });
+
+            match result {
+                Ok(r) => return Ok(r),
+                Err(TransportError::Sequence | TransportError::Timeout)
+                    if resync && attempt == 0 =>
+                {
+                    log::warn!("Protocol error, resyncing...");
+                    self.resync()?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(TransportError::Timeout)
+    }
+
     fn negotiate_caps(&mut self) -> Result<(), TransportError> {
         let p = self
-            .cmd(Opcode::ProtoGetCaps, 0, None, false)?
+            .send_cmd(Opcode::ProtoGetCaps, 0, None, false)?
             .ok_or(TransportError::Timeout)?;
         if p.len() < 6 {
             return Err(TransportError::IoError("Invalid caps".into()));
@@ -349,7 +209,7 @@ impl Camera {
         let mut buf = vec![0u8; 16];
         buf[0..4].copy_from_slice(&flags.to_le_bytes());
         buf[4..6].copy_from_slice(&(self.max_payload as u16).to_le_bytes());
-        self.cmd(Opcode::ProtoSetCaps, 0, Some(&buf), false)?;
+        self.send_cmd(Opcode::ProtoSetCaps, 0, Some(&buf), false)?;
 
         let mp = self.max_payload;
         self.transport()?.update_caps(true, true, mp);
@@ -358,7 +218,7 @@ impl Camera {
 
     fn update_channels(&mut self) -> Result<(), TransportError> {
         let p = self
-            .cmd(Opcode::ChannelList, 0, None, true)?
+            .send_cmd(Opcode::ChannelList, 0, None, true)?
             .ok_or(TransportError::Timeout)?;
         self.channels.clear();
         for i in 0..p.len() / 16 {
@@ -376,7 +236,7 @@ impl Camera {
     }
 
     fn cache_info(&mut self) {
-        if let Ok(Some(p)) = self.cmd(Opcode::ProtoVersion, 0, None, true) {
+        if let Ok(Some(p)) = self.send_cmd(Opcode::ProtoVersion, 0, None, true) {
             if p.len() >= 9 {
                 self.verinfo = Some(VersionInfo {
                     protocol: [p[0], p[1], p[2]],
@@ -385,7 +245,7 @@ impl Camera {
                 });
             }
         }
-        if let Ok(Some(p)) = self.cmd(Opcode::SysInfo, 0, None, true) {
+        if let Ok(Some(p)) = self.send_cmd(Opcode::SysInfo, 0, None, true) {
             if p.len() >= 76 {
                 let u = |o: usize| u32::from_le_bytes([p[o], p[o + 1], p[o + 2], p[o + 3]]);
                 let usb_id = u(16);
@@ -431,7 +291,7 @@ impl Camera {
 
     fn ch_size(&mut self, id: u8, resync: bool) -> Result<u32, TransportError> {
         let p = self
-            .cmd(Opcode::ChannelSize, id, None, resync)?
+            .send_cmd(Opcode::ChannelSize, id, None, resync)?
             .ok_or(TransportError::Timeout)?;
         Ok(u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
     }
@@ -446,7 +306,7 @@ impl Camera {
         let mut req = [0u8; 8];
         req[0..4].copy_from_slice(&offset.to_le_bytes());
         req[4..8].copy_from_slice(&length.to_le_bytes());
-        self.cmd(Opcode::ChannelRead, id, Some(&req), resync)?
+        self.send_cmd(Opcode::ChannelRead, id, Some(&req), resync)?
             .ok_or(TransportError::Timeout)
     }
 
@@ -458,18 +318,18 @@ impl Camera {
             buf[0..4].copy_from_slice(&offset.to_le_bytes());
             buf[4..8].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
             buf[8..].copy_from_slice(chunk);
-            self.cmd(Opcode::ChannelWrite, id, Some(&buf), true)?;
+            self.send_cmd(Opcode::ChannelWrite, id, Some(&buf), true)?;
         }
         Ok(())
     }
 
-    fn ch_ioctl(&mut self, id: u8, cmd: u32, args: &[u32]) -> Result<(), TransportError> {
+    fn ch_ioctl(&mut self, id: u8, send_cmd: u32, args: &[u32]) -> Result<(), TransportError> {
         let mut buf = vec![0u8; 4 + args.len() * 4];
-        buf[0..4].copy_from_slice(&cmd.to_le_bytes());
+        buf[0..4].copy_from_slice(&send_cmd.to_le_bytes());
         for (i, a) in args.iter().enumerate() {
             buf[4 + i * 4..8 + i * 4].copy_from_slice(&a.to_le_bytes());
         }
-        self.cmd(Opcode::ChannelIoctl, id, Some(&buf), true)?;
+        self.send_cmd(Opcode::ChannelIoctl, id, Some(&buf), true)?;
         Ok(())
     }
 
@@ -500,7 +360,7 @@ impl Camera {
 
     fn do_reset(&mut self, opcode: Opcode) -> Result<(), TransportError> {
         // Send reset/boot command; ignore response since the camera will hard-reset.
-        let _ = self.cmd(opcode, 0, None, false);
+        let _ = self.send_cmd(opcode, 0, None, false);
         self.disconnect();
         Ok(())
     }
@@ -509,7 +369,7 @@ impl Camera {
 
     fn memory_stats(&mut self) -> Result<Vec<MemEntry>, TransportError> {
         let p = self
-            .cmd(Opcode::SysMemory, 0, None, true)?
+            .send_cmd(Opcode::SysMemory, 0, None, true)?
             .ok_or(TransportError::Timeout)?;
         if p.len() < 4 {
             return Err(TransportError::IoError(
@@ -538,7 +398,7 @@ impl Camera {
 
     fn device_stats(&mut self) -> Result<ProtoStats, TransportError> {
         let p = self
-            .cmd(Opcode::ProtoStats, 0, None, true)?
+            .send_cmd(Opcode::ProtoStats, 0, None, true)?
             .ok_or(TransportError::Timeout)?;
         if p.len() < 32 {
             return Err(TransportError::IoError(
@@ -583,13 +443,11 @@ impl Camera {
 
     fn do_read_frame(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let id = self.ch("stream")?;
-        match self.cmd(Opcode::ChannelLock, id, None, false) {
-            Ok(_) => {}
-            Err(TransportError::Nak(Status::Busy)) => return Ok(()),
-            Err(_) => return Ok(()),
+        if self.send_cmd(Opcode::ChannelLock, id, None, false).is_err() {
+            return Ok(());
         }
         let result = self.read_frame_locked(id, tx);
-        let _ = self.cmd(Opcode::ChannelUnlock, id, None, false);
+        let _ = self.send_cmd(Opcode::ChannelUnlock, id, None, false);
         result
     }
 
@@ -600,10 +458,6 @@ impl Camera {
         }
 
         let data = self.ch_read(id, 0, size, false)?;
-        if data.len() < 24 {
-            return Ok(());
-        }
-
         let width = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let height = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let format = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
@@ -715,20 +569,133 @@ impl Camera {
         let _ = tx.send(InvokeResponseBody::Raw(buf));
         Ok(())
     }
-}
 
-fn enqueue(queue: &mut VecDeque<Command>, cmd: Command) {
-    if cmd.is_idempotent() && queue.iter().any(|c| c == &cmd) {
-        return;
+    // -- Worker loop --
+    pub fn run(&mut self, rx: mpsc::Receiver<Command>, tx: &Channel, poll_interval: Duration) {
+        loop {
+            while let Ok(send_cmd) = rx.try_recv() {
+                self.enqueue(send_cmd);
+            }
+
+            if !self.queue.is_empty() {
+                let send_cmd = self.queue.pop_front().unwrap();
+                if matches!(send_cmd, Command::Disconnect) {
+                    break;
+                }
+                self.process_cmd(send_cmd, tx);
+            } else {
+                self.poll_events(poll_interval);
+            }
+
+            self.process_events(tx);
+
+            if !self.is_connected() {
+                let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_DISCONNECTED]));
+                break;
+            }
+        }
     }
-    if cmd.is_priority() {
-        // User actions go to the front of the queue.
-        let pos = queue
-            .iter()
-            .position(|c| !c.is_priority())
-            .unwrap_or(queue.len());
-        queue.insert(pos, cmd);
-    } else {
-        queue.push_back(cmd);
+
+    fn enqueue(&mut self, send_cmd: Command) {
+        if send_cmd.is_idempotent() && self.queue.iter().any(|c| c == &send_cmd) {
+            return;
+        }
+        if send_cmd.is_priority() {
+            // User actions go to the front of the queue.
+            let pos = self
+                .queue
+                .iter()
+                .position(|c| !c.is_priority())
+                .unwrap_or(self.queue.len());
+            self.queue.insert(pos, send_cmd);
+        } else {
+            self.queue.push_back(send_cmd);
+        }
+    }
+
+    fn process_cmd(&mut self, send_cmd: Command, tx: &Channel) {
+        let result = match &send_cmd {
+            Command::RunScript(script) => self.exec_script(script),
+            Command::StopScript => self.stop_script(),
+            Command::EnableStreaming { enable, raw } => self.enable_streaming(*enable, *raw),
+            Command::SetStreamSource(chip_id) => self.set_stream_source(*chip_id),
+            Command::GetMemory => self.do_get_memory(tx),
+            Command::GetStats => self.do_get_stats(tx),
+            Command::ReadChannel(id) => self.do_read_channel(*id, tx),
+            Command::ReadStdout => self.do_read_stdout(tx),
+            Command::ReadFrame => self.do_read_frame(tx),
+            Command::UpdateChannels => self.update_channels(),
+            Command::Reset => self.do_reset(Opcode::SysReset),
+            Command::Bootloader => self.do_reset(Opcode::SysBoot),
+            Command::Disconnect => unreachable!(),
+        };
+
+        if let Err(e) = result {
+            log::warn!("process_cmd({:?}): {}", send_cmd, e);
+            let mut buf = vec![TAG_ERROR];
+            buf.extend_from_slice(e.to_string().as_bytes());
+            let _ = tx.send(InvokeResponseBody::Raw(buf));
+        }
+    }
+
+    fn poll_events(&mut self, timeout: Duration) {
+        let t = match self.transport.as_mut() {
+            Some(t) => t,
+            None => return,
+        };
+
+        // recv_packet buffers events internally; we just need to trigger a
+        // receive attempt so the transport has a chance to collect them.
+        match t.recv_packet(Some(timeout)) {
+            Ok(_) => {} // unexpected non-event, drop it
+            Err(TransportError::Timeout) => {}
+            Err(e) => log::warn!("poll_events: {}", e),
+        }
+    }
+
+    fn process_events(&mut self, tx: &Channel) {
+        let events = match self.transport.as_mut() {
+            Some(t) => t.drain_events(),
+            None => vec![],
+        };
+
+        for packet in events {
+            *self.event_counts.entry(packet.channel).or_insert(0) += 1;
+
+            if packet.channel == 0 {
+                // System event on channel 0
+                let payload = packet.payload.as_ref().unwrap();
+                let event_type = u16::from_le_bytes([payload[0], payload[1]]);
+                match event_type {
+                    x if x == EventType::ChannelRegistered as u16 => {
+                        self.enqueue(Command::UpdateChannels);
+                    }
+                    x if x == EventType::SoftReboot as u16 => {
+                        let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_SOFT_REBOOT]));
+                    }
+                    _ => {}
+                }
+            } else {
+                // Data event -- map channel ID to name/flags
+                let info = self
+                    .channels
+                    .iter()
+                    .find(|(_, ci)| ci.id == packet.channel)
+                    .map(|(name, ci)| (name.clone(), ci.flags));
+
+                match info {
+                    Some((ref name, _)) if name == "stdout" => {
+                        self.enqueue(Command::ReadStdout);
+                    }
+                    Some((ref name, _)) if name == "stream" => {
+                        self.enqueue(Command::ReadFrame);
+                    }
+                    Some((_, flags)) if flags & CHANNEL_FLAG_DYNAMIC != 0 => {
+                        self.enqueue(Command::ReadChannel(packet.channel));
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }

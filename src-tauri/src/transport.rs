@@ -35,7 +35,6 @@ const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&OPENMV_CRC32);
 #[derive(Debug)]
 pub enum TransportError {
     Timeout,
-    Checksum,
     Sequence,
     Nak(Status),
     IoError(String),
@@ -47,7 +46,6 @@ impl std::fmt::Display for TransportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Timeout => write!(f, "Timeout"),
-            Self::Checksum => write!(f, "Checksum error"),
             Self::Sequence => write!(f, "Sequence error"),
             Self::Nak(s) => write!(f, "NAK: {:?}", s),
             Self::IoError(e) => write!(f, "IO: {}", e),
@@ -128,7 +126,7 @@ impl Transport {
 
     pub fn open(&mut self) -> Result<(), TransportError> {
         self.close();
-        let mut serial = serialport::new(&self.port, self.baudrate)
+        let serial = serialport::new(&self.port, self.baudrate)
             .timeout(self.timeout)
             .open()
             .map_err(|e| TransportError::IoError(e.to_string()))?;
@@ -150,15 +148,15 @@ impl Transport {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.serial.as_ref().is_some_and(|s| {
-            match s.bytes_to_read() {
+        self.serial
+            .as_ref()
+            .is_some_and(|s| match s.bytes_to_read() {
                 Ok(_) => true,
                 Err(e) => {
                     log::warn!("is_connected: bytes_to_read failed: {}", e);
                     false
                 }
-            }
-        })
+            })
     }
 
     pub fn reset_sequence(&mut self) {
@@ -252,12 +250,12 @@ impl Transport {
     /// Receive one packet. Returns the packet as-is -- caller checks flags
     /// to determine if it is a response, event, NAK, etc.
     /// Events are ACK'd and returned immediately without advancing sequence.
-    pub fn recv_packet(&mut self) -> Result<Packet, TransportError> {
+    pub fn recv_packet(&mut self, timeout: Option<Duration>) -> Result<Packet, TransportError> {
         if !self.is_connected() {
             return Err(TransportError::NotConnected);
         }
         let mut fragments: Vec<u8> = Vec::new();
-        let mut deadline = Instant::now() + self.timeout;
+        let mut deadline = Instant::now() + timeout.unwrap_or(self.timeout);
 
         loop {
             if Instant::now() >= deadline {
@@ -295,7 +293,7 @@ impl Transport {
             }
 
             // Run state machine
-            let packet = match self.process() {
+            let mut packet = match self.process() {
                 Some(p) => p,
                 None => {
                     std::thread::sleep(Duration::from_micros(100));
@@ -342,8 +340,9 @@ impl Transport {
 
             // Collect fragments -- reset deadline per fragment, cap at 10MB
             if packet.flags.contains(PacketFlags::FRAGMENT) {
-                if let Some(ref p) = packet.payload {
-                    if fragments.len() + p.len() > 10 * 1024 * 1024 {
+                if packet.length > 0 {
+                    let p = packet.payload.as_ref().unwrap();
+                    if fragments.len() + packet.length as usize > 10 * 1024 * 1024 {
                         log::warn!("Fragment overflow (>10MB), dropping");
                         fragments.clear();
                         continue;
@@ -354,29 +353,17 @@ impl Transport {
                 continue;
             }
 
-            // Assemble final payload from fragments
+            // Last fragment or non-fragmented packet
             if !fragments.is_empty() {
-                if let Some(ref p) = packet.payload {
-                    fragments.extend_from_slice(p);
+                if packet.length > 0 {
+                    fragments.extend_from_slice(packet.payload.as_ref().unwrap());
                 }
-                return Ok(Packet {
-                    payload: Some(fragments),
-                    ..packet
-                });
+                packet.payload = Some(fragments);
+                packet.length = packet.payload.as_ref().unwrap().len() as u16;
             }
 
             return Ok(packet);
         }
-    }
-
-    /// Set the receive timeout.
-    pub fn set_timeout(&mut self, timeout: Duration) {
-        self.timeout = timeout;
-    }
-
-    /// Get the current receive timeout.
-    pub fn get_timeout(&self) -> Duration {
-        self.timeout
     }
 
     /// Drain buffered events collected during recv_packet.
