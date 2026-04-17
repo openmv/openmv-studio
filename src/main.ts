@@ -54,6 +54,7 @@ import {
   startChannelsPolling,
   stopChannelsPolling,
   resetChannelsState,
+  clearChannelsCache,
   isChannelsTabActive,
   updateMemUi,
   updateStatsUi,
@@ -320,6 +321,7 @@ function setScriptRunning(running: boolean) {
 
   if (!running) {
     stopChannelsPolling();
+    clearChannelsCache();
   } else if (isChannelsTabActive()) {
     startChannelsPolling();
   }

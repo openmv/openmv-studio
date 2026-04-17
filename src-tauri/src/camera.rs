@@ -667,10 +667,13 @@ impl Camera {
                 let payload = packet.payload.as_ref().unwrap();
                 let event_type = u16::from_le_bytes([payload[0], payload[1]]);
                 match event_type {
-                    x if x == EventType::ChannelRegistered as u16 => {
+                    x if x == EventType::ChannelRegistered as u16
+                        || x == EventType::ChannelUnregistered as u16 =>
+                    {
                         self.enqueue(Command::UpdateChannels);
                     }
                     x if x == EventType::SoftReboot as u16 => {
+                        self.enqueue(Command::UpdateChannels);
                         let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_SOFT_REBOOT]));
                     }
                     _ => {}
