@@ -3,7 +3,9 @@
 
 import * as monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Store } from "@tauri-apps/plugin-store";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   state,
   scheduleSaveSettings,
@@ -25,8 +27,7 @@ import {
   shortcutOverrides,
   setShortcutOverrides,
   getShortcutDisplay,
-  shortcutToString,
-  type Shortcut,
+  getActiveShortcuts,
 } from "./shortcuts";
 
 let editor: monaco.editor.IStandaloneCodeEditor;
@@ -257,456 +258,168 @@ export async function loadSettings() {
   }
 }
 
-// --- Settings dialog ---
+// --- Settings dialog (WebviewWindow) ---
 
-export function openSettings() {
-  const prevTab =
-    document
-      .querySelector(".settings-icon-tab.active")
-      ?.getAttribute("data-stab") || null;
+let settingsWin: WebviewWindow | null = null;
+let settingsUnlisten: (() => void) | null = null;
 
-  document.getElementById("settings-overlay")?.remove();
+export async function openSettings() {
+  if (settingsWin) {
+    return;
+  }
 
-  const overlay = document.createElement("div");
-
-  overlay.id = "settings-overlay";
-  overlay.className = "settings-overlay";
-  overlay.innerHTML = buildSettingsHtml();
-  document.body.appendChild(overlay);
-
-  overlay.onclick = (e) => {
-    if (e.target === overlay) {
-      overlay.remove();
-    }
-  };
-
-  document.addEventListener("keydown", function esc(e) {
-    if (e.key === "Escape") {
-      overlay.remove();
-      document.removeEventListener("keydown", esc);
-    }
+  const scale = state.uiScale;
+  const win = new WebviewWindow("settings", {
+    url: "settings.html",
+    title: "Settings",
+    width: Math.round(520 * scale),
+    height: Math.round(560 * scale),
+    resizable: true,
+    center: true,
+    parent: "main",
   });
 
-  // Tab switching
-  const titlebar = overlay.querySelector(".settings-titlebar")!;
+  settingsWin = win;
 
-  overlay.querySelectorAll(".settings-icon-tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const id = (tab as HTMLElement).dataset.stab!;
-
-      overlay
-        .querySelectorAll(".settings-icon-tab")
-        .forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-
-      overlay
-        .querySelectorAll(".settings-pane")
-        .forEach((p) => ((p as HTMLElement).style.display = "none"));
-      (
-        overlay.querySelector(
-          `.settings-pane[data-stab="${id}"]`,
-        ) as HTMLElement
-      ).style.display = "";
-
-      titlebar.textContent = (
-        tab.querySelector("span") as HTMLElement
-      ).textContent;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      win.once("tauri://created", () => resolve());
+      win.once("tauri://error", (e) => reject(e));
     });
-  });
-
-  if (prevTab) {
-    const btn = overlay.querySelector(
-      `.settings-icon-tab[data-stab="${prevTab}"]`,
-    ) as HTMLElement;
-
-    if (btn) {
-      btn.click();
-    }
+  } catch (e: any) {
+    console.error("Failed to create settings window:", e);
+    settingsWin = null;
+    return;
   }
 
-  bindSettingsControls(overlay);
-}
-
-function bindSettingsControls(overlay: HTMLElement) {
-  // UI scale
-  const scaleSlider = document.getElementById("set-scale") as HTMLInputElement;
-  const scaleLabel = document.getElementById("scale-label")!;
-
-  scaleSlider.oninput = () => {
-    const v = parseInt(scaleSlider.value);
-    scaleLabel.textContent = v + "%";
-    setUiScale(v / 100);
-    scheduleSaveSettings();
-  };
-
-  // Editor controls
-  document.getElementById("set-font-size")!.onchange = (e) => {
-    editor.updateOptions({
-      fontSize: parseInt((e.target as HTMLInputElement).value),
-    });
-    scheduleSaveSettings();
-  };
-
-  document.getElementById("set-tab-size")!.onchange = (e) => {
-    editor.updateOptions({
-      tabSize: parseInt((e.target as HTMLInputElement).value),
-    });
-    scheduleSaveSettings();
-  };
-
-  document.getElementById("set-word-wrap")!.onchange = (e) => {
-    editor.updateOptions({
-      wordWrap: (e.target as HTMLInputElement).checked ? "on" : "off",
-    });
-    scheduleSaveSettings();
-  };
-
-  document.getElementById("set-minimap")!.onchange = (e) => {
-    editor.updateOptions({
-      minimap: { enabled: (e.target as HTMLInputElement).checked },
-    });
-    scheduleSaveSettings();
-  };
-
-  document.getElementById("set-line-numbers")!.onchange = (e) => {
-    editor.updateOptions({
-      lineNumbers: (e.target as HTMLInputElement).checked ? "on" : "off",
-    });
-    scheduleSaveSettings();
-  };
-
-  // Filter examples
-  document.getElementById("set-filter-examples")!.onchange = (e) => {
-    state.filterExamples = (e.target as HTMLInputElement).checked;
-    resetExamples();
-
-    if (!state.filterExamples) {
-      loadExamples();
-    } else if (state.isConnected) {
-      loadExamples();
-    } else {
-      clearExamplesTree();
-    }
-
-    scheduleSaveSettings();
-  };
-
-  // Serial port
-  const serialAuto = document.getElementById("set-serial-auto") as HTMLInputElement;
-  const serialRow = document.getElementById("serial-port-row") as HTMLElement;
-  const serialSelect = document.getElementById("set-serial-port") as HTMLSelectElement;
-
-  if (serialAuto && serialSelect) {
-    serialAuto.onchange = () => {
-      if (serialAuto.checked) {
-        serialRow.style.display = "none";
-        state.serialPort = "";
-      } else {
-        serialRow.style.display = "";
-        state.serialPort = serialSelect.value || "";
-      }
-    };
-
-    serialSelect.onchange = () => {
-      state.serialPort = serialSelect.value;
-    };
-
-    // Populate the dropdown
-    invoke<string[]>("cmd_list_ports", { all: true }).then((ports) => {
-      serialSelect.innerHTML = "";
-
-      for (const p of ports) {
-        const opt = document.createElement("option");
-
-        opt.value = p;
-        opt.textContent = p;
-
-        if (p === state.serialPort) {
-          opt.selected = true;
-        }
-
-        serialSelect.appendChild(opt);
-      }
-    }).catch(() => {});
-  }
-
-  // Poll rate
-  const pollSlider = document.getElementById("set-poll-rate") as HTMLInputElement;
-  const pollLabel = document.getElementById("poll-rate-label")!;
-
-  if (pollSlider) {
-    pollSlider.oninput = () => {
-      pollLabel.textContent = pollSlider.value + " ms";
-    };
-
-    pollSlider.onchange = () => {
-      state.pollIntervalMs = parseInt(pollSlider.value);
-      invoke("cmd_set_poll_interval", { intervalMs: state.pollIntervalMs });
-      scheduleSaveSettings();
-    };
-  }
-
-  // Theme
-  overlay.querySelectorAll('input[name="theme"]').forEach((radio) => {
-    radio.addEventListener("change", () => {
-      applyThemeFn((radio as HTMLInputElement).value as ThemeSetting);
-      scheduleSaveSettings();
+  // Wait for the settings page JS to load and register listeners
+  const readyUnlisten = await listen("settings-ready", () => {
+    readyUnlisten();
+    const edOpts = editor.getOptions();
+    win.emit("settings-init", {
+    scalePercent: Math.round(state.uiScale * 100),
+    theme: state.currentThemeSetting,
+    resolvedTheme: document.documentElement.getAttribute("data-theme") || "dark",
+    filterExamples: state.filterExamples,
+    serialPort: state.serialPort,
+    pollIntervalMs: state.pollIntervalMs,
+    fontSize: edOpts.get(monaco.editor.EditorOption.fontSize),
+    tabSize: edOpts.get(monaco.editor.EditorOption.tabSize),
+    wordWrap: edOpts.get(monaco.editor.EditorOption.wordWrap) !== 0,
+    minimap: edOpts.get(monaco.editor.EditorOption.minimap).enabled,
+    lineNumbers: edOpts.get(monaco.editor.EditorOption.lineNumbers) !== 0,
+    shortcuts: shortcutBindings.map((b) => ({
+      id: b.id,
+      label: b.label,
+      defaultDisplay: getShortcutDisplay(b),
+      override: shortcutOverrides[b.id] || null,
+    })),
+    tabShortcuts: {
+      prev: getActiveShortcuts(shortcutBindings.find((b) => b.id === "prev-tab")!),
+      next: getActiveShortcuts(shortcutBindings.find((b) => b.id === "next-tab")!),
+    },
     });
   });
 
-  // Shortcut recording
-  overlay.querySelectorAll(".shortcut-input").forEach((input) => {
-    input.addEventListener("click", () => {
-      const el = input as HTMLInputElement;
+  // Listen for changes from settings window
+  const unlisten = await listen<any>("settings-change", (event) => {
+    const { type, value } = event.payload;
 
-      el.value = "Press keys...";
-      el.removeAttribute("readonly");
-
-      const handler = (e: KeyboardEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        if (e.key === "Escape") {
-          const sid = el.dataset.sid!;
-
-          el.value =
-            shortcutOverrides[sid] ||
-            getShortcutDisplay(shortcutBindings.find((b) => b.id === sid)!);
-          el.setAttribute("readonly", "");
-          document.removeEventListener("keydown", handler, true);
-          return;
-        }
-
-        if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) {
-          return;
-        }
-
-        const s: Shortcut = {
-          key: e.key.length === 1 ? e.key.toLowerCase() : e.key,
-        };
-
-        if (e.metaKey) {
-          s.meta = true;
-        }
-
-        if (e.ctrlKey) {
-          s.ctrl = true;
-        }
-
-        if (e.shiftKey) {
-          s.shift = true;
-        }
-
-        if (e.altKey) {
-          s.alt = true;
-        }
-
-        const str = shortcutToString(s);
-        const sid = el.dataset.sid!;
-
-        shortcutOverrides[sid] = str;
-        el.value = str;
-        el.setAttribute("readonly", "");
-        document.removeEventListener("keydown", handler, true);
+    switch (type) {
+      case "uiScale":
+        setUiScale(value);
         scheduleSaveSettings();
-        openSettings();
-      };
-
-      document.addEventListener("keydown", handler, true);
-    });
+        break;
+      case "theme":
+        applyThemeFn(value as ThemeSetting);
+        scheduleSaveSettings();
+        break;
+      case "filterExamples":
+        state.filterExamples = value;
+        resetExamples();
+        if (!state.filterExamples) {
+          loadExamples();
+        } else if (state.isConnected) {
+          loadExamples();
+        } else {
+          clearExamplesTree();
+        }
+        scheduleSaveSettings();
+        break;
+      case "fontSize":
+        editor.updateOptions({ fontSize: value });
+        scheduleSaveSettings();
+        break;
+      case "tabSize":
+        editor.updateOptions({ tabSize: value });
+        scheduleSaveSettings();
+        break;
+      case "wordWrap":
+        editor.updateOptions({ wordWrap: value ? "on" : "off" });
+        scheduleSaveSettings();
+        break;
+      case "minimap":
+        editor.updateOptions({ minimap: { enabled: value } });
+        scheduleSaveSettings();
+        break;
+      case "lineNumbers":
+        editor.updateOptions({ lineNumbers: value ? "on" : "off" });
+        scheduleSaveSettings();
+        break;
+      case "serialPort":
+        state.serialPort = value;
+        break;
+      case "pollIntervalMs":
+        state.pollIntervalMs = value;
+        scheduleSaveSettings();
+        break;
+      case "shortcutSet":
+        shortcutOverrides[value.id] = value.value;
+        scheduleSaveSettings();
+        break;
+      case "shortcutReset":
+        delete shortcutOverrides[value];
+        scheduleSaveSettings();
+        break;
+      case "reset":
+        resetAllSettings();
+        break;
+    }
   });
 
-  // Shortcut reset
-  overlay.querySelectorAll(".shortcut-reset").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const sid = (btn as HTMLElement).dataset.sid!;
+  settingsUnlisten = unlisten;
 
-      delete shortcutOverrides[sid];
-      scheduleSaveSettings();
-      openSettings();
-    });
+  // Clean up when settings window closes
+  win.once("tauri://destroyed", () => {
+    if (settingsUnlisten) {
+      settingsUnlisten();
+      settingsUnlisten = null;
+    }
+    settingsWin = null;
   });
-
-  // Reset all
-  document.getElementById("set-reset")!.onclick = async () => {
-    const s = await getStore();
-
-    await s.clear();
-    await s.save();
-
-    state.uiScale = 1.2;
-    state.currentThemeSetting = "dark";
-    state.pollIntervalMs = 50;
-    state.splitLocked = false;
-    document.getElementById("btn-lock-split")?.classList.remove("active");
-    setShortcutOverrides({});
-
-    invoke("cmd_set_poll_interval", { intervalMs: state.pollIntervalMs });
-    applyThemeFn("dark");
-    setUiScale(1.2);
-
-    editor.updateOptions({
-      fontSize: 13,
-      tabSize: 4,
-      wordWrap: "off",
-      minimap: { enabled: false },
-      lineNumbers: "on",
-    });
-
-    overlay.remove();
-  };
 }
 
-// --- Settings dialog HTML ---
+async function resetAllSettings() {
+  const s = await getStore();
 
-function buildSettingsHtml(): string {
-  const scalePercent = Math.round(state.uiScale * 100);
-  const fontSize = editor.getOption(monaco.editor.EditorOption.fontSize);
+  await s.clear();
+  await s.save();
 
-  return SETTINGS_HTML
-    .replace("{{scalePercent}}", String(scalePercent))
-    .replace("{{scalePercent2}}", String(scalePercent))
-    .replace("{{fontSize}}", String(fontSize))
-    .replace("{{serialAutoChecked}}", state.serialPort ? "" : "checked")
-    .replace("{{serialPortRowDisplay}}", state.serialPort ? "" : "display:none")
-    .replace("{{pollInterval}}", String(state.pollIntervalMs))
-    .replace("{{pollInterval2}}", String(state.pollIntervalMs))
-    .replace("{{lightChecked}}", state.currentThemeSetting === "light" ? "checked" : "")
-    .replace("{{darkChecked}}", state.currentThemeSetting === "dark" ? "checked" : "")
-    .replace("{{systemChecked}}", state.currentThemeSetting === "system" ? "checked" : "")
-    .replace("{{filterChecked}}", state.filterExamples ? "checked" : "")
-    .replace("{{shortcutRows}}", shortcutBindings
-      .map(
-        (b) => `
-      <div class="shortcut-row">
-        <span class="shortcut-action">${b.label}</span>
-        <div class="shortcut-value">
-          ${shortcutOverrides[b.id] ? `<button class="shortcut-reset" data-sid="${b.id}" title="Reset to default">x</button>` : ""}
-          <input class="shortcut-input" data-sid="${b.id}"
-            value="${shortcutOverrides[b.id] || getShortcutDisplay(b)}"
-            placeholder="${b.defaults.map(shortcutToString).join(" / ")}"
-            readonly>
-        </div>
-      </div>
-    `,
-      )
-      .join(""));
+  state.uiScale = 1.2;
+  state.currentThemeSetting = "dark";
+  state.pollIntervalMs = 50;
+  state.splitLocked = false;
+  document.getElementById("btn-lock-split")?.classList.remove("active");
+  setShortcutOverrides({});
+
+  applyThemeFn("dark");
+  setUiScale(1.2);
+
+  editor.updateOptions({
+    fontSize: 13,
+    tabSize: 4,
+    wordWrap: "off",
+    minimap: { enabled: false },
+    lineNumbers: "on",
+  });
 }
-
-const SETTINGS_HTML = `
-  <div class="settings-dialog">
-    <div class="settings-titlebar">General</div>
-    <div class="settings-icon-tabs">
-      <button class="settings-icon-tab active" data-stab="general">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-        <span>General</span>
-      </button>
-      <button class="settings-icon-tab" data-stab="editor">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        <span>Editor</span>
-      </button>
-      <button class="settings-icon-tab" data-stab="connection">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        <span>Connection</span>
-      </button>
-      <button class="settings-icon-tab" data-stab="framebuffer">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        <span>Frame Buffer</span>
-      </button>
-      <button class="settings-icon-tab" data-stab="shortcuts">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h8M6 16h.01M18 16h.01M10 16h4"/></svg>
-        <span>Shortcuts</span>
-      </button>
-    </div>
-    <div class="settings-divider"></div>
-
-    <div class="settings-pane" data-stab="general">
-      <div class="pref-row">
-        <span class="pref-label">UI Scale</span>
-        <div class="scale-control">
-          <input type="range" id="set-scale" min="50" max="200" step="5" value="{{scalePercent}}">
-          <span class="scale-value" id="scale-label">{{scalePercent2}}%</span>
-        </div>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Theme</span>
-        <div class="radio-group">
-          <label class="radio-opt"><input type="radio" name="theme" value="light" {{lightChecked}}> Light</label>
-          <label class="radio-opt"><input type="radio" name="theme" value="dark" {{darkChecked}}> Dark</label>
-          <label class="radio-opt"><input type="radio" name="theme" value="system" {{systemChecked}}> System</label>
-        </div>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Filter Examples</span>
-        <label class="switch"><input type="checkbox" id="set-filter-examples" {{filterChecked}}><span class="switch-slider"></span></label>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label"></span>
-        <button class="pref-btn" id="set-reset">Reset All Settings</button>
-      </div>
-    </div>
-
-    <div class="settings-pane" data-stab="editor" style="display:none">
-      <div class="pref-row">
-        <span class="pref-label">Font Size</span>
-        <input type="number" class="pref-input" id="set-font-size" value="{{fontSize}}" min="8" max="32">
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Tab Size</span>
-        <input type="number" class="pref-input" id="set-tab-size" value="4" min="2" max="8">
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Word Wrap</span>
-        <label class="switch"><input type="checkbox" id="set-word-wrap"><span class="switch-slider"></span></label>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Minimap</span>
-        <label class="switch"><input type="checkbox" id="set-minimap"><span class="switch-slider"></span></label>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Line Numbers</span>
-        <label class="switch"><input type="checkbox" checked id="set-line-numbers"><span class="switch-slider"></span></label>
-      </div>
-    </div>
-
-    <div class="settings-pane" data-stab="connection" style="display:none">
-      <div class="pref-row">
-        <span class="pref-label">Auto-detect Port</span>
-        <label class="switch"><input type="checkbox" id="set-serial-auto" {{serialAutoChecked}}><span class="switch-slider"></span></label>
-      </div>
-      <div class="pref-row" id="serial-port-row" style="{{serialPortRowDisplay}}">
-        <span class="pref-label">Serial Port</span>
-        <select class="pref-input" id="set-serial-port" style="width:200px"></select>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Poll Rate</span>
-        <div class="scale-control">
-          <input type="range" id="set-poll-rate" min="10" max="200" step="10" value="{{pollInterval}}">
-          <span class="scale-value" id="poll-rate-label">{{pollInterval2}} ms</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-pane" data-stab="framebuffer" style="display:none">
-      <div class="pref-row">
-        <span class="pref-label">JPEG Quality</span>
-        <input type="number" class="pref-input" value="80" min="10" max="100">
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Auto Zoom</span>
-        <label class="switch"><input type="checkbox" checked><span class="switch-slider"></span></label>
-      </div>
-      <div class="pref-row">
-        <span class="pref-label">Show Crosshair</span>
-        <label class="switch"><input type="checkbox"><span class="switch-slider"></span></label>
-      </div>
-    </div>
-
-    <div class="settings-pane" data-stab="shortcuts" style="display:none">
-      <div class="shortcuts-list">
-        {{shortcutRows}}
-      </div>
-      <p class="shortcut-hint">Click a shortcut, then press the new key combination to rebind.</p>
-    </div>
-  </div>
-`;

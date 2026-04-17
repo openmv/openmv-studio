@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root, [data-theme="dark"] {
+      --bg-panel: #19191d;
+      --bg-surface: #1e1e23;
+      --bg-elevated: #25252b;
+      --bg-hover: #2a2a32;
+      --bg-active: #32323c;
+      --border-subtle: rgba(255,255,255,0.06);
+      --border-mid: rgba(255,255,255,0.10);
+      --text-primary: #e8e6e3;
+      --text-secondary: #9d9b97;
+      --text-tertiary: #6b6966;
+      --text-muted: #4a4845;
+      --accent-blue: #5b9cf5;
+      --accent-blue-dim: rgba(91,156,245,0.12);
+      --font-code: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      color-scheme: dark;
+    }
+    [data-theme="light"] {
+      --bg-panel: #ebebef;
+      --bg-surface: #f5f5f7;
+      --bg-elevated: #e2e2e6;
+      --bg-hover: #d8d8dd;
+      --bg-active: #ceced4;
+      --border-subtle: rgba(0,0,0,0.10);
+      --border-mid: rgba(0,0,0,0.18);
+      --text-primary: #1a1a1e;
+      --text-secondary: #4a4a54;
+      --text-tertiary: #6e6e7a;
+      --text-muted: #9a9aa4;
+      --accent-blue: #2670e0;
+      --accent-blue-dim: rgba(38,112,224,0.12);
+      color-scheme: light;
+    }
+
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      background: var(--bg-panel);
+      color: var(--text-primary);
+      display: flex; flex-direction: column;
+      height: 100vh; overflow: hidden;
+      user-select: none;
+    }
+
+    .settings-icon-tabs {
+      display: flex; gap: 4px;
+      padding: 12px 16px 8px; background: var(--bg-elevated);
+    }
+    .settings-icon-tab {
+      flex: 1;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      padding: 6px 4px; border: none; background: transparent;
+      border-radius: var(--radius-md); cursor: pointer; color: var(--text-tertiary);
+    }
+    .settings-icon-tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    .settings-icon-tab.active {
+      background: var(--accent-blue-dim); color: var(--accent-blue);
+    }
+    .settings-icon-tab svg { width: 22px; height: 22px; }
+    .settings-icon-tab span { font-size: 10px; font-weight: 500; }
+    .settings-divider { height: 1px; background: var(--border-subtle); }
+
+    .settings-pane { padding: 20px 32px 24px; overflow-y: auto; flex: 1; min-height: 0; }
+
+    .pref-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0;
+      font-size: 13px; color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .pref-row:last-child { border-bottom: none; }
+    .pref-label {
+      text-align: left;
+      font-weight: 500; color: var(--text-secondary);
+    }
+    .pref-input, .pref-select, .shortcut-input {
+      padding: 5px 8px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border-mid); background: var(--bg-surface);
+      color: var(--text-primary); font-size: 12px; font-family: var(--font-code);
+      width: 120px; box-sizing: border-box; height: 24px;
+    }
+
+    .scale-control { display: flex; align-items: center; gap: 10px; width: 200px; }
+    .scale-value {
+      font-family: var(--font-code); font-size: 12px; font-weight: 600;
+      color: var(--accent-blue); min-width: 40px; text-align: right;
+    }
+    input[type="range"] {
+      -webkit-appearance: none; flex: 1; height: 4px;
+      background: var(--bg-active); border-radius: 2px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      background: var(--accent-blue); border-radius: 50%; cursor: pointer;
+      border: 2px solid var(--bg-panel);
+    }
+
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+    .switch input { display: none; }
+    .switch-slider {
+      position: absolute; inset: 0; border-radius: 10px;
+      background: var(--bg-active); cursor: pointer; transition: background 0.2s;
+    }
+    .switch-slider::after {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--text-tertiary); transition: all 0.2s;
+    }
+    .switch input:checked + .switch-slider { background: var(--accent-blue); }
+    .switch input:checked + .switch-slider::after { left: 19px; background: #fff; }
+
+    .radio-group { display: flex; gap: 16px; }
+    .radio-opt {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; color: var(--text-secondary); cursor: pointer;
+    }
+    .radio-opt input[type="radio"] {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      border: 2px solid var(--text-muted); border-radius: 50%;
+      background: transparent; cursor: pointer; position: relative;
+    }
+    .radio-opt input[type="radio"]:checked {
+      border-color: var(--accent-blue);
+    }
+    .radio-opt input[type="radio"]:checked::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent-blue);
+    }
+
+    .pref-btn {
+      padding: 5px 14px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border-mid); background: var(--bg-surface);
+      color: var(--text-secondary); font-size: 12px; cursor: pointer;
+    }
+    .pref-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .shortcuts-list { display: flex; flex-direction: column; gap: 4px; }
+    .shortcut-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .shortcut-row:last-child { border-bottom: none; }
+    .shortcut-action {
+      text-align: left; font-size: 13px;
+      color: var(--text-secondary); font-weight: 500;
+    }
+    .shortcut-input { cursor: pointer; text-align: center; }
+    .shortcut-input:focus {
+      border-color: var(--accent-blue); outline: none;
+      background: var(--accent-blue-dim);
+    }
+    .shortcut-value { display: flex; align-items: center; gap: 4px; }
+    .shortcut-reset {
+      width: 20px; height: 20px; border: none; background: transparent;
+      color: var(--text-muted); cursor: pointer; font-size: 12px;
+      border-radius: 3px; display: flex; align-items: center; justify-content: center;
+    }
+    .shortcut-reset:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .shortcut-hint {
+      margin-top: 12px; font-size: 11px; color: var(--text-muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="settings-icon-tabs">
+    <button class="settings-icon-tab active" data-stab="general">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <span>General</span>
+    </button>
+    <button class="settings-icon-tab" data-stab="editor">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      <span>Editor</span>
+    </button>
+    <button class="settings-icon-tab" data-stab="connection">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      <span>Connection</span>
+    </button>
+    <button class="settings-icon-tab" data-stab="framebuffer">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      <span>Frame Buffer</span>
+    </button>
+    <button class="settings-icon-tab" data-stab="shortcuts">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h8M6 16h.01M18 16h.01M10 16h4"/></svg>
+      <span>Shortcuts</span>
+    </button>
+  </div>
+  <div class="settings-divider"></div>
+
+  <div class="settings-pane" data-stab="general">
+    <div class="pref-row">
+      <span class="pref-label">UI Scale</span>
+      <div class="scale-control">
+        <input type="range" id="set-scale" min="50" max="200" step="5" value="120">
+        <span class="scale-value" id="scale-label">120%</span>
+      </div>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Theme</span>
+      <div class="radio-group">
+        <label class="radio-opt"><input type="radio" name="theme" value="light"> Light</label>
+        <label class="radio-opt"><input type="radio" name="theme" value="dark" checked> Dark</label>
+        <label class="radio-opt"><input type="radio" name="theme" value="system"> System</label>
+      </div>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Filter Examples</span>
+      <label class="switch"><input type="checkbox" id="set-filter-examples"><span class="switch-slider"></span></label>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label"></span>
+      <button class="pref-btn" id="set-reset">Reset All Settings</button>
+    </div>
+  </div>
+
+  <div class="settings-pane" data-stab="editor" style="display:none">
+    <div class="pref-row">
+      <span class="pref-label">Font Size</span>
+      <input type="number" class="pref-input" id="set-font-size" value="13" min="8" max="32">
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Tab Size</span>
+      <input type="number" class="pref-input" id="set-tab-size" value="4" min="2" max="8">
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Word Wrap</span>
+      <label class="switch"><input type="checkbox" id="set-word-wrap"><span class="switch-slider"></span></label>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Minimap</span>
+      <label class="switch"><input type="checkbox" id="set-minimap"><span class="switch-slider"></span></label>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Line Numbers</span>
+      <label class="switch"><input type="checkbox" id="set-line-numbers" checked><span class="switch-slider"></span></label>
+    </div>
+  </div>
+
+  <div class="settings-pane" data-stab="connection" style="display:none">
+    <div class="pref-row">
+      <span class="pref-label">Auto-detect Port</span>
+      <label class="switch"><input type="checkbox" id="set-serial-auto" checked><span class="switch-slider"></span></label>
+    </div>
+    <div class="pref-row" id="serial-port-row" style="display:none">
+      <span class="pref-label">Serial Port</span>
+      <select class="pref-input" id="set-serial-port" style="width:200px"></select>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Poll Rate</span>
+      <div class="scale-control">
+        <input type="range" id="set-poll-rate" min="10" max="200" step="10" value="50">
+        <span class="scale-value" id="poll-rate-label">50 ms</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-pane" data-stab="framebuffer" style="display:none">
+    <div class="pref-row">
+      <span class="pref-label">JPEG Quality</span>
+      <input type="number" class="pref-input" value="80" min="10" max="100">
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Auto Zoom</span>
+      <label class="switch"><input type="checkbox" checked><span class="switch-slider"></span></label>
+    </div>
+    <div class="pref-row">
+      <span class="pref-label">Show Crosshair</span>
+      <label class="switch"><input type="checkbox"><span class="switch-slider"></span></label>
+    </div>
+  </div>
+
+  <div class="settings-pane" data-stab="shortcuts" style="display:none">
+    <div class="shortcuts-list" id="shortcuts-list"></div>
+    <p class="shortcut-hint">Click a shortcut, then press the new key combination to rebind.</p>
+  </div>
+
+  <script>
+    var listen = window.__TAURI__.event.listen;
+    var emit = window.__TAURI__.event.emit;
+    var invoke = window.__TAURI__.core.invoke;
+    var appWindow = window.__TAURI__.window.getCurrentWindow();
+
+    var shortcuts = [];
+    var tabShortcuts = { prev: [], next: [] };
+
+    function changed(type, value) {
+      emit("settings-change", { type: type, value: value });
+    }
+
+    // --- Tab switching ---
+    document.querySelectorAll(".settings-icon-tab").forEach(function(tab) {
+      tab.addEventListener("click", function() {
+        var id = tab.dataset.stab;
+        document.querySelectorAll(".settings-icon-tab").forEach(function(t) {
+          t.classList.remove("active");
+        });
+        tab.classList.add("active");
+        document.querySelectorAll(".settings-pane").forEach(function(p) {
+          p.style.display = "none";
+        });
+        document.querySelector('.settings-pane[data-stab="' + id + '"]').style.display = "";
+      });
+    });
+
+    // --- Init from main window ---
+    listen("settings-init", function(event) {
+      var d = event.payload;
+
+      // Theme
+      var resolved = d.resolvedTheme || "dark";
+      document.documentElement.setAttribute("data-theme", resolved);
+
+      // UI Scale
+      var scaleSlider = document.getElementById("set-scale");
+      var scaleLabel = document.getElementById("scale-label");
+      scaleSlider.value = d.scalePercent;
+      scaleLabel.textContent = d.scalePercent + "%";
+
+      // Theme radios
+      document.querySelectorAll('input[name="theme"]').forEach(function(r) {
+        r.checked = (r.value === d.theme);
+      });
+
+      // Filter examples
+      document.getElementById("set-filter-examples").checked = d.filterExamples;
+
+      // Editor
+      document.getElementById("set-font-size").value = d.fontSize;
+      document.getElementById("set-tab-size").value = d.tabSize;
+      document.getElementById("set-word-wrap").checked = d.wordWrap;
+      document.getElementById("set-minimap").checked = d.minimap;
+      document.getElementById("set-line-numbers").checked = d.lineNumbers;
+
+      // Connection
+      var serialAuto = document.getElementById("set-serial-auto");
+      var serialRow = document.getElementById("serial-port-row");
+      if (d.serialPort) {
+        serialAuto.checked = false;
+        serialRow.style.display = "";
+      } else {
+        serialAuto.checked = true;
+        serialRow.style.display = "none";
+      }
+
+      // Poll rate
+      var pollSlider = document.getElementById("set-poll-rate");
+      var pollLabel = document.getElementById("poll-rate-label");
+      pollSlider.value = d.pollIntervalMs;
+      pollLabel.textContent = d.pollIntervalMs + " ms";
+
+      // Shortcuts
+      shortcuts = d.shortcuts || [];
+      tabShortcuts = d.tabShortcuts || { prev: [], next: [] };
+      buildShortcuts();
+
+      // Load serial ports
+      invoke("cmd_list_ports", { all: true }).then(function(ports) {
+        var sel = document.getElementById("set-serial-port");
+        sel.innerHTML = "";
+        for (var i = 0; i < ports.length; i++) {
+          var opt = document.createElement("option");
+          opt.value = ports[i];
+          opt.textContent = ports[i];
+          if (ports[i] === d.serialPort) {
+            opt.selected = true;
+          }
+          sel.appendChild(opt);
+        }
+      }).catch(function() {});
+    });
+
+    // --- Control handlers ---
+
+    // UI Scale
+    document.getElementById("set-scale").oninput = function() {
+      var v = parseInt(this.value);
+      document.getElementById("scale-label").textContent = v + "%";
+      changed("uiScale", v / 100);
+    };
+
+    // Theme
+    document.querySelectorAll('input[name="theme"]').forEach(function(radio) {
+      radio.addEventListener("change", function() {
+        var theme = radio.value;
+        changed("theme", theme);
+        if (theme === "system") {
+          var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+        } else {
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+      });
+    });
+
+    // Filter examples
+    document.getElementById("set-filter-examples").onchange = function() {
+      changed("filterExamples", this.checked);
+    };
+
+    // Font size
+    document.getElementById("set-font-size").onchange = function() {
+      changed("fontSize", parseInt(this.value));
+    };
+
+    // Tab size
+    document.getElementById("set-tab-size").onchange = function() {
+      changed("tabSize", parseInt(this.value));
+    };
+
+    // Word wrap
+    document.getElementById("set-word-wrap").onchange = function() {
+      changed("wordWrap", this.checked);
+    };
+
+    // Minimap
+    document.getElementById("set-minimap").onchange = function() {
+      changed("minimap", this.checked);
+    };
+
+    // Line numbers
+    document.getElementById("set-line-numbers").onchange = function() {
+      changed("lineNumbers", this.checked);
+    };
+
+    // Serial auto-detect
+    document.getElementById("set-serial-auto").onchange = function() {
+      var row = document.getElementById("serial-port-row");
+      if (this.checked) {
+        row.style.display = "none";
+        changed("serialPort", "");
+      } else {
+        row.style.display = "";
+        var sel = document.getElementById("set-serial-port");
+        changed("serialPort", sel.value || "");
+      }
+    };
+
+    // Serial port select
+    document.getElementById("set-serial-port").onchange = function() {
+      changed("serialPort", this.value);
+    };
+
+    // Poll rate
+    var pollSlider = document.getElementById("set-poll-rate");
+    var pollLabel = document.getElementById("poll-rate-label");
+    pollSlider.oninput = function() {
+      pollLabel.textContent = pollSlider.value + " ms";
+    };
+    pollSlider.onchange = function() {
+      changed("pollIntervalMs", parseInt(pollSlider.value));
+    };
+
+    // Reset all
+    document.getElementById("set-reset").onclick = function() {
+      changed("reset", true);
+      appWindow.close();
+    };
+
+    // --- Shortcuts ---
+
+    function buildShortcuts() {
+      var list = document.getElementById("shortcuts-list");
+      list.innerHTML = "";
+      for (var i = 0; i < shortcuts.length; i++) {
+        var s = shortcuts[i];
+        var row = document.createElement("div");
+        row.className = "shortcut-row";
+
+        var action = document.createElement("span");
+        action.className = "shortcut-action";
+        action.textContent = s.label;
+
+        var value = document.createElement("div");
+        value.className = "shortcut-value";
+
+        if (s.override) {
+          var resetBtn = document.createElement("button");
+          resetBtn.className = "shortcut-reset";
+          resetBtn.dataset.sid = s.id;
+          resetBtn.title = "Reset to default";
+          resetBtn.textContent = "x";
+          resetBtn.addEventListener("click", (function(sid) {
+            return function() {
+              changed("shortcutReset", sid);
+              for (var j = 0; j < shortcuts.length; j++) {
+                if (shortcuts[j].id === sid) {
+                  shortcuts[j].override = null;
+                  break;
+                }
+              }
+              buildShortcuts();
+            };
+          })(s.id));
+          value.appendChild(resetBtn);
+        }
+
+        var input = document.createElement("input");
+        input.className = "shortcut-input";
+        input.dataset.sid = s.id;
+        input.value = s.override || s.defaultDisplay;
+        input.setAttribute("readonly", "");
+        input.addEventListener("click", (function(el, sid) {
+          return function() {
+            el.value = "Press keys...";
+            el.removeAttribute("readonly");
+
+            var handler = function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+
+              if (e.key === "Escape") {
+                var sc = shortcuts.find(function(x) { return x.id === sid; });
+                el.value = (sc && sc.override) || (sc && sc.defaultDisplay) || "";
+                el.setAttribute("readonly", "");
+                document.removeEventListener("keydown", handler, true);
+                return;
+              }
+
+              if (["Meta", "Control", "Alt", "Shift"].indexOf(e.key) >= 0) {
+                return;
+              }
+
+              var parts = [];
+              if (e.metaKey) { parts.push("Cmd"); }
+              if (e.ctrlKey) { parts.push("Ctrl"); }
+              if (e.shiftKey) { parts.push("Shift"); }
+              if (e.altKey) { parts.push("Alt"); }
+              var key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+              parts.push(key);
+              var str = parts.join("+");
+
+              el.value = str;
+              el.setAttribute("readonly", "");
+              document.removeEventListener("keydown", handler, true);
+
+              changed("shortcutSet", { id: sid, value: str });
+              for (var j = 0; j < shortcuts.length; j++) {
+                if (shortcuts[j].id === sid) {
+                  shortcuts[j].override = str;
+                  break;
+                }
+              }
+              buildShortcuts();
+            };
+
+            document.addEventListener("keydown", handler, true);
+          };
+        })(input, s.id));
+        value.appendChild(input);
+
+        row.appendChild(action);
+        row.appendChild(value);
+        list.appendChild(row);
+      }
+    }
+
+    // --- Keyboard shortcuts ---
+    function matchesShortcut(e, s) {
+      var keyMatch = e.key.toLowerCase() === s.key.toLowerCase() || e.key === s.key;
+      return keyMatch &&
+        !!s.meta === e.metaKey &&
+        !!s.ctrl === e.ctrlKey &&
+        !!s.shift === e.shiftKey &&
+        !!s.alt === e.altKey;
+    }
+
+    function matchesAny(e, list) {
+      for (var i = 0; i < list.length; i++) {
+        if (matchesShortcut(e, list[i])) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        appWindow.close();
+        return;
+      }
+
+      var tabs = document.querySelectorAll(".settings-icon-tab");
+      var activeIdx = -1;
+      for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].classList.contains("active")) {
+          activeIdx = i;
+          break;
+        }
+      }
+
+      if (matchesAny(e, tabShortcuts.prev)) {
+        e.preventDefault();
+        var prev = (activeIdx - 1 + tabs.length) % tabs.length;
+        tabs[prev].click();
+      } else if (matchesAny(e, tabShortcuts.next)) {
+        e.preventDefault();
+        var next = (activeIdx + 1) % tabs.length;
+        tabs[next].click();
+      }
+    });
+
+    // Signal main window that we're ready for init data
+    emit("settings-ready", {});
+  </script>
+</body>
+</html>
