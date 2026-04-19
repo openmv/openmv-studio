@@ -443,8 +443,13 @@ impl Camera {
 
     fn do_read_frame(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let id = self.ch("stream")?;
-        if self.send_cmd(Opcode::ChannelLock, id, None, false).is_err() {
-            return Ok(());
+        match self.send_cmd(Opcode::ChannelLock, id, None, false) {
+            Err(TransportError::Nak(Status::Busy)) => {
+                self.enqueue(Command::ReadFrame);
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+            Ok(_) => {}
         }
         let result = self.read_frame_locked(id, tx);
         let _ = self.send_cmd(Opcode::ChannelUnlock, id, None, false);
@@ -632,6 +637,9 @@ impl Camera {
 
         if let Err(e) = result {
             log::warn!("process_cmd({:?}): {}", send_cmd, e);
+            if matches!(e, TransportError::IoError(_) | TransportError::NotConnected) {
+                self.disconnect();
+            }
             let mut buf = vec![TAG_ERROR];
             buf.extend_from_slice(e.to_string().as_bytes());
             let _ = tx.send(InvokeResponseBody::Raw(buf));
@@ -648,51 +656,43 @@ impl Camera {
         // receive attempt so the transport has a chance to collect them.
         match t.recv_packet(Some(timeout)) {
             Ok(_) => {} // unexpected non-event, drop it
-            Err(TransportError::Timeout) => {}
-            Err(e) => log::warn!("poll_events: {}", e),
+            Err(e) => {}
         }
     }
 
     fn process_events(&mut self, tx: &Channel) {
         let events = match self.transport.as_mut() {
             Some(t) => t.drain_events(),
-            None => vec![],
+            None => return,
         };
 
         for packet in events {
             *self.event_counts.entry(packet.channel).or_insert(0) += 1;
 
             if packet.channel == 0 {
-                // System event on channel 0
-                let payload = packet.payload.as_ref().unwrap();
+                let payload = match packet.payload.as_ref() {
+                    Some(p) if p.len() >= 2 => p,
+                    _ => continue,
+                };
                 let event_type = u16::from_le_bytes([payload[0], payload[1]]);
-                match event_type {
-                    x if x == EventType::ChannelRegistered as u16
-                        || x == EventType::ChannelUnregistered as u16 =>
-                    {
-                        self.enqueue(Command::UpdateChannels);
-                    }
-                    x if x == EventType::SoftReboot as u16 => {
-                        self.enqueue(Command::UpdateChannels);
-                        let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_SOFT_REBOOT]));
-                    }
-                    _ => {}
+                if event_type == EventType::ChannelRegistered as u16
+                    || event_type == EventType::ChannelUnregistered as u16
+                {
+                    self.enqueue(Command::UpdateChannels);
+                } else if event_type == EventType::SoftReboot as u16 {
+                    self.enqueue(Command::UpdateChannels);
+                    let _ = tx.send(InvokeResponseBody::Raw(vec![TAG_SOFT_REBOOT]));
                 }
             } else {
-                // Data event -- map channel ID to name/flags
                 let info = self
                     .channels
                     .iter()
                     .find(|(_, ci)| ci.id == packet.channel)
-                    .map(|(name, ci)| (name.clone(), ci.flags));
+                    .map(|(name, ci)| (name.as_str(), ci.flags));
 
                 match info {
-                    Some((ref name, _)) if name == "stdout" => {
-                        self.enqueue(Command::ReadStdout);
-                    }
-                    Some((ref name, _)) if name == "stream" => {
-                        self.enqueue(Command::ReadFrame);
-                    }
+                    Some(("stdout", _)) => self.enqueue(Command::ReadStdout),
+                    Some(("stream", _)) => self.enqueue(Command::ReadFrame),
                     Some((_, flags)) if flags & CHANNEL_FLAG_DYNAMIC != 0 => {
                         self.enqueue(Command::ReadChannel(packet.channel));
                     }
