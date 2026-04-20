@@ -529,6 +529,8 @@ async function doDisconnect() {
     rafId = 0;
     pendingFrame = null;
   }
+
+  resetFbBadges();
 }
 
 async function toggleConnect() {
@@ -598,6 +600,7 @@ async function stopScript() {
   try {
     await invoke("cmd_stop_script");
     setScriptRunning(false);
+    resetFbBadges();
   } catch (e: any) {
     console.error("Stop failed:", e);
   }
@@ -656,6 +659,12 @@ const fbNoImage = document.querySelector(".no-image") as HTMLElement;
 const fbResolution = document.getElementById("fb-resolution")!;
 const fbFormat = document.getElementById("fb-format")!;
 const fbFps = document.getElementById("fb-fps")!;
+
+function resetFbBadges() {
+  fbResolution.textContent = "";
+  fbFormat.textContent = "";
+  fbFps.textContent = "";
+}
 
 wglInit(fbCanvas);
 

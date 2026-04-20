@@ -395,14 +395,13 @@ body {
 }
 .info-tag { display: flex; align-items: center; gap: 6px; }
 .fb-overlay-badges {
-  position: absolute; top: 6px; left: 6px; z-index: 2;
-  display: flex; gap: 5px; pointer-events: none;
+  display: flex; gap: 5px; align-items: center;
 }
 .fb-overlay-badges:not(:has(.info-badge:not(:empty))) { display: none; }
 .info-badge {
-  font-size: 11px; padding: 4px 8px 4px 6px; border-radius: 12px;
+  font-size: 11px; padding: 2px 8px 2px 6px; border-radius: 12px;
   font-weight: 500; font-family: var(--font-code);
-  background: rgba(0, 0, 0, 0.5); color: #e0e0e0;
+  background: var(--bg-surface); color: var(--text-secondary);
   display: inline-flex; align-items: center; gap: 5px;
 }
 .info-badge:empty { display: none; }
