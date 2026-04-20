@@ -2,13 +2,13 @@
   "boards": [
     {
       "type": "OPENMV_N6",
-      "display": "OpenMV Cam N6",
+      "display": "OpenMV-N6",
       "model": "models/OPENMV_N6.glb",
       "pinout": "pinouts/OPENMV_N6.json"
     },
     {
       "type": "OPENMV_AE3",
-      "display": "OpenMV Cam AE3",
+      "display": "OpenMV-AE3",
       "model": "models/OPENMV_AE3.glb",
       "pinout": "pinouts/OPENMV_AE3.json"
     }
