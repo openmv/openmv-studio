@@ -30,3 +30,14 @@ crc = "3.4"
 open = "5"
 tauri-plugin-single-instance = "2"
 tauri-plugin-shell = "2.3.5"
+
+[profile.dev]
+incremental = true
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
