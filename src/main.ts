@@ -417,7 +417,7 @@ async function doConnect() {
 
     let connLabel: string;
 
-    if (state.transportType === "tcp") {
+    if (state.transportType === "udp") {
       if (!state.networkAddress) {
         termLog(
           "Network address not configured. Set it in Settings > Connection.",

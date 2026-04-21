@@ -15,7 +15,7 @@ export const state = {
   splitLocked: false,
   currentThemeSetting: "dark" as ThemeSetting,
   serialPort: "" as string,
-  transportType: "serial" as "serial" | "tcp",
+  transportType: "serial" as "serial" | "udp",
   networkAddress: "openmv.local:5555" as string,
 };
 

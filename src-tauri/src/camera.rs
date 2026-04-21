@@ -155,32 +155,23 @@ impl Camera {
         opcode: Opcode,
         channel: u8,
         data: Option<&[u8]>,
-        resync: bool,
     ) -> Result<Option<Vec<u8>>, TransportError> {
         for attempt in 0..2 {
-            self.transport()?
-                .send_packet(opcode, channel, PacketFlags::empty(), data)?;
-
-            let result = self.transport()?.recv_packet(None).and_then(|packet| {
-                if packet.flags.contains(PacketFlags::NAK) {
-                    let p = packet.payload.as_ref().unwrap();
-                    let status = Status::from_u16(u16::from_le_bytes([p[0], p[1]]))
-                        .unwrap_or(Status::Failed);
-                    Err(TransportError::Nak(status))
-                } else {
-                    Ok(packet.payload)
+            let result: Result<Option<Vec<u8>>, TransportError> = (|| {
+                self.transport()?
+                    .send_packet(opcode, channel, PacketFlags::empty(), data)?;
+                if opcode == Opcode::SysReset || opcode == Opcode::SysBoot {
+                    return Ok(None);
                 }
-            });
+                Ok(self.transport()?.recv_packet(None)?.payload)
+            })();
 
-            match result {
-                Ok(r) => return Ok(r),
-                Err(TransportError::Sequence | TransportError::Timeout)
-                    if resync && attempt == 0 =>
-                {
+            match &result {
+                Err(e) if e.is_recoverable() && attempt == 0 => {
                     log::warn!("Protocol error, resyncing...");
                     self.resync()?;
                 }
-                Err(e) => return Err(e),
+                _ => return result,
             }
         }
         Err(TransportError::Timeout)
@@ -188,7 +179,7 @@ impl Camera {
 
     fn negotiate_caps(&mut self) -> Result<(), TransportError> {
         let p = self
-            .send_cmd(Opcode::ProtoGetCaps, 0, None, false)?
+            .send_cmd(Opcode::ProtoGetCaps, 0, None)?
             .ok_or(TransportError::Timeout)?;
         if p.len() < 6 {
             return Err(TransportError::IoError("Invalid caps".into()));
@@ -207,12 +198,11 @@ impl Camera {
         }
         if seq {
             flags |= 1 << 1;
-            flags |= 1 << 2; // ack requires seq
         }
         let mut buf = vec![0u8; 16];
         buf[0..4].copy_from_slice(&flags.to_le_bytes());
         buf[4..6].copy_from_slice(&(self.max_payload as u16).to_le_bytes());
-        self.send_cmd(Opcode::ProtoSetCaps, 0, Some(&buf), false)?;
+        self.send_cmd(Opcode::ProtoSetCaps, 0, Some(&buf))?;
 
         let mp = self.max_payload;
         self.transport()?.update_caps(crc, seq, mp);
@@ -221,7 +211,7 @@ impl Camera {
 
     fn update_channels(&mut self) -> Result<(), TransportError> {
         let p = self
-            .send_cmd(Opcode::ChannelList, 0, None, true)?
+            .send_cmd(Opcode::ChannelList, 0, None)?
             .ok_or(TransportError::Timeout)?;
         self.channels.clear();
         for i in 0..p.len() / 16 {
@@ -239,7 +229,7 @@ impl Camera {
     }
 
     fn cache_info(&mut self) {
-        if let Ok(Some(p)) = self.send_cmd(Opcode::ProtoVersion, 0, None, true) {
+        if let Ok(Some(p)) = self.send_cmd(Opcode::ProtoVersion, 0, None) {
             if p.len() >= 9 {
                 self.verinfo = Some(VersionInfo {
                     protocol: [p[0], p[1], p[2]],
@@ -248,7 +238,7 @@ impl Camera {
                 });
             }
         }
-        if let Ok(Some(p)) = self.send_cmd(Opcode::SysInfo, 0, None, true) {
+        if let Ok(Some(p)) = self.send_cmd(Opcode::SysInfo, 0, None) {
             if p.len() >= 76 {
                 let u = |o: usize| u32::from_le_bytes([p[o], p[o + 1], p[o + 2], p[o + 3]]);
                 let usb_id = u(16);
@@ -292,9 +282,9 @@ impl Camera {
             .ok_or_else(|| TransportError::IoError(format!("Channel '{}' not found", name)))
     }
 
-    fn ch_size(&mut self, id: u8, resync: bool) -> Result<u32, TransportError> {
+    fn ch_size(&mut self, id: u8) -> Result<u32, TransportError> {
         let p = self
-            .send_cmd(Opcode::ChannelSize, id, None, resync)?
+            .send_cmd(Opcode::ChannelSize, id, None)?
             .ok_or(TransportError::Timeout)?;
         Ok(u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
     }
@@ -304,12 +294,11 @@ impl Camera {
         id: u8,
         offset: u32,
         length: u32,
-        resync: bool,
     ) -> Result<Vec<u8>, TransportError> {
         let mut req = [0u8; 8];
         req[0..4].copy_from_slice(&offset.to_le_bytes());
         req[4..8].copy_from_slice(&length.to_le_bytes());
-        self.send_cmd(Opcode::ChannelRead, id, Some(&req), resync)?
+        self.send_cmd(Opcode::ChannelRead, id, Some(&req))?
             .ok_or(TransportError::Timeout)
     }
 
@@ -321,7 +310,7 @@ impl Camera {
             buf[0..4].copy_from_slice(&offset.to_le_bytes());
             buf[4..8].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
             buf[8..].copy_from_slice(chunk);
-            self.send_cmd(Opcode::ChannelWrite, id, Some(&buf), true)?;
+            self.send_cmd(Opcode::ChannelWrite, id, Some(&buf))?;
         }
         Ok(())
     }
@@ -332,7 +321,7 @@ impl Camera {
         for (i, a) in args.iter().enumerate() {
             buf[4 + i * 4..8 + i * 4].copy_from_slice(&a.to_le_bytes());
         }
-        self.send_cmd(Opcode::ChannelIoctl, id, Some(&buf), true)?;
+        self.send_cmd(Opcode::ChannelIoctl, id, Some(&buf))?;
         Ok(())
     }
 
@@ -363,7 +352,7 @@ impl Camera {
 
     fn do_reset(&mut self, opcode: Opcode) -> Result<(), TransportError> {
         // Send reset/boot command; ignore response since the camera will hard-reset.
-        let _ = self.send_cmd(opcode, 0, None, false);
+        let _ = self.send_cmd(opcode, 0, None);
         self.disconnect();
         Ok(())
     }
@@ -372,7 +361,7 @@ impl Camera {
 
     fn memory_stats(&mut self) -> Result<Vec<MemEntry>, TransportError> {
         let p = self
-            .send_cmd(Opcode::SysMemory, 0, None, true)?
+            .send_cmd(Opcode::SysMemory, 0, None)?
             .ok_or(TransportError::Timeout)?;
         if p.len() < 4 {
             return Err(TransportError::IoError(
@@ -401,7 +390,7 @@ impl Camera {
 
     fn device_stats(&mut self) -> Result<ProtoStats, TransportError> {
         let p = self
-            .send_cmd(Opcode::ProtoStats, 0, None, true)?
+            .send_cmd(Opcode::ProtoStats, 0, None)?
             .ok_or(TransportError::Timeout)?;
         if p.len() < 32 {
             return Err(TransportError::IoError(
@@ -432,11 +421,11 @@ impl Camera {
 
     fn do_read_stdout(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let id = self.ch("stdout")?;
-        let size = self.ch_size(id, true)?;
+        let size = self.ch_size(id)?;
         if size == 0 {
             return Ok(());
         }
-        let data = self.ch_read(id, 0, size, true)?;
+        let data = self.ch_read(id, 0, size)?;
         let mut buf = Vec::with_capacity(1 + data.len());
         buf.push(TAG_STDOUT);
         buf.extend_from_slice(&data);
@@ -446,8 +435,8 @@ impl Camera {
 
     fn do_read_frame(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let id = self.ch("stream")?;
-        match self.send_cmd(Opcode::ChannelLock, id, None, false) {
-            Err(TransportError::Nak(Status::Busy)) => {
+        match self.send_cmd(Opcode::ChannelLock, id, None) {
+            Err(TransportError::Busy) => {
                 self.enqueue(Command::ReadFrame);
                 return Ok(());
             }
@@ -455,17 +444,17 @@ impl Camera {
             Ok(_) => {}
         }
         let result = self.read_frame_locked(id, tx);
-        let _ = self.send_cmd(Opcode::ChannelUnlock, id, None, false);
+        let _ = self.send_cmd(Opcode::ChannelUnlock, id, None);
         result
     }
 
     fn read_frame_locked(&mut self, id: u8, tx: &Channel) -> Result<(), TransportError> {
-        let size = self.ch_size(id, false)?;
+        let size = self.ch_size(id)?;
         if size <= 24 {
             return Ok(());
         }
 
-        let data = self.ch_read(id, 0, size, false)?;
+        let data = self.ch_read(id, 0, size)?;
         let width = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let height = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let format = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
@@ -561,11 +550,11 @@ impl Camera {
             .map(|(n, _)| n.clone())
             .ok_or_else(|| TransportError::IoError(format!("Channel {} not found", id)))?;
 
-        let size = self.ch_size(id, true)?;
+        let size = self.ch_size(id)?;
         if size == 0 {
             return Ok(());
         }
-        let data = self.ch_read(id, 0, size, true)?;
+        let data = self.ch_read(id, 0, size)?;
 
         // Single-channel format: [TAG, name_len, name, data_len, data]
         let mut buf = Vec::with_capacity(1 + 1 + name.len() + 4 + data.len());

@@ -136,7 +136,7 @@ export async function loadSettings() {
       ioInterval?: number;
       filterExamples?: boolean;
       splitLocked?: boolean;
-      transportType?: "serial" | "tcp";
+      transportType?: "serial" | "udp";
       networkAddress?: string;
     }>("ui");
 

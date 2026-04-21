@@ -1,7 +1,7 @@
 // OpenMV Protocol Transport Layer
 
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 use crc::{Algorithm, Crc, Table};
@@ -35,20 +35,38 @@ const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&OPENMV_CRC32);
 
 #[derive(Debug)]
 pub enum TransportError {
+    Failed,
+    Invalid,
     Timeout,
+    Busy,
+    Checksum,
     Sequence,
-    Nak(Status),
+    Overflow,
+    Fragment,
+    Unknown,
     IoError(String),
     PayloadTooLarge,
     NotConnected,
 }
 
+impl TransportError {
+    pub fn is_recoverable(&self) -> bool {
+        matches!(self, Self::Sequence | Self::Checksum | Self::Timeout)
+    }
+}
+
 impl std::fmt::Display for TransportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Failed => write!(f, "Command failed"),
+            Self::Invalid => write!(f, "Invalid command"),
             Self::Timeout => write!(f, "Timeout"),
+            Self::Busy => write!(f, "Busy"),
+            Self::Checksum => write!(f, "Checksum error"),
             Self::Sequence => write!(f, "Sequence error"),
-            Self::Nak(s) => write!(f, "NAK: {:?}", s),
+            Self::Overflow => write!(f, "Overflow"),
+            Self::Fragment => write!(f, "Fragment error"),
+            Self::Unknown => write!(f, "Unknown error"),
             Self::IoError(e) => write!(f, "IO: {}", e),
             Self::PayloadTooLarge => write!(f, "Payload too large"),
             Self::NotConnected => write!(f, "Not connected"),
@@ -65,7 +83,7 @@ enum ParseState {
 
 enum Backend {
     Serial(Box<dyn serialport::SerialPort>),
-    Tcp(TcpStream),
+    Udp(UdpSocket),
 }
 
 pub struct Transport {
@@ -114,30 +132,28 @@ impl Transport {
         Ok(Backend::Serial(serial))
     }
 
-    fn create_tcp(address: &str) -> Result<Backend, TransportError> {
+    fn create_udp(address: &str) -> Result<Backend, TransportError> {
         use std::net::ToSocketAddrs;
         let addr = address
             .to_socket_addrs()
             .map_err(|e| TransportError::IoError(format!("Resolve {}: {}", address, e)))?
             .next()
             .ok_or_else(|| TransportError::IoError(format!("Could not resolve {}", address)))?;
-        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+        let sock = UdpSocket::bind("0.0.0.0:0")
             .map_err(|e| TransportError::IoError(e.to_string()))?;
-        stream
-            .set_read_timeout(Some(Duration::from_millis(1)))
+        sock.connect(addr)
             .map_err(|e| TransportError::IoError(e.to_string()))?;
-        stream
-            .set_nodelay(true)
+        sock.set_read_timeout(Some(Duration::from_millis(1)))
             .map_err(|e| TransportError::IoError(e.to_string()))?;
-        Ok(Backend::Tcp(stream))
+        Ok(Backend::Udp(sock))
     }
 
     pub fn new(address: &str, transport: &str, max_payload: usize) -> Result<Self, TransportError> {
         let (backend, crc, seq, timeout) = match transport {
-            "tcp" => (
-                Self::create_tcp(address)?,
-                false,
-                false,
+            "udp" => (
+                Self::create_udp(address)?,
+                true,
+                true,
                 Duration::from_secs(3),
             ),
             _ => (
@@ -169,12 +185,11 @@ impl Transport {
     }
 
     pub fn open(&mut self) -> Result<(), TransportError> {
-        if let Some(Backend::Tcp(ref mut stream)) = self.backend {
-            // TCP: drain pending data, reset state
+        if let Some(Backend::Udp(ref sock)) = self.backend {
+            // UDP: drain pending datagrams, reset state
             let mut trash = [0u8; 4096];
             loop {
-                match stream.read(&mut trash) {
-                    Ok(0) => return Err(TransportError::NotConnected),
+                match sock.recv(&mut trash) {
                     Err(ref e)
                         if e.kind() == std::io::ErrorKind::WouldBlock
                             || e.kind() == std::io::ErrorKind::TimedOut =>
@@ -205,9 +220,7 @@ impl Transport {
             Some(Backend::Serial(s)) => {
                 let _ = s.flush();
             }
-            Some(Backend::Tcp(stream)) => {
-                let _ = stream.shutdown(Shutdown::Both);
-            }
+            Some(Backend::Udp(_)) => {}
             None => {}
         }
         self.backend = None;
@@ -222,16 +235,7 @@ impl Transport {
                     false
                 }
             },
-            Some(Backend::Tcp(stream)) => match stream.peek(&mut [0u8; 1]) {
-                Ok(_) => true,
-                Err(ref e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
-                    true
-                }
-                Err(_) => false,
-            },
+            Some(Backend::Udp(_)) => true,
             None => false,
         }
     }
@@ -318,9 +322,8 @@ impl Transport {
                     }
                 }
             },
-            Some(Backend::Tcp(stream)) => loop {
-                match stream.read(&mut self.read_buf) {
-                    Ok(0) => return Err(TransportError::NotConnected),
+            Some(Backend::Udp(sock)) => loop {
+                match sock.recv(&mut self.read_buf) {
                     Ok(n) => {
                         self.buf.extend_from_slice(&self.read_buf[..n]);
                     }
@@ -331,7 +334,7 @@ impl Transport {
                         break;
                     }
                     Err(e) => {
-                        log::warn!("read_available: tcp read failed: {}", e);
+                        log::warn!("read_available: udp recv failed: {}", e);
                         return Err(TransportError::IoError(e.to_string()));
                     }
                 }
@@ -376,14 +379,17 @@ impl Transport {
         }
 
         let total = HEADER_SIZE + length + if length > 0 { CRC_SIZE } else { 0 };
-        let writer: &mut dyn Write = match &mut self.backend {
-            Some(Backend::Serial(s)) => s.as_mut(),
-            Some(Backend::Tcp(s)) => s,
+        match &mut self.backend {
+            Some(Backend::Serial(s)) => {
+                s.write_all(&self.pbuf[..total])
+                    .map_err(|e| TransportError::IoError(e.to_string()))?;
+            }
+            Some(Backend::Udp(sock)) => {
+                sock.send(&self.pbuf[..total])
+                    .map_err(|e| TransportError::IoError(e.to_string()))?;
+            }
             None => return Err(TransportError::NotConnected),
-        };
-        writer
-            .write_all(&self.pbuf[..total])
-            .map_err(|e| TransportError::IoError(e.to_string()))?;
+        }
 
         Ok(())
     }
@@ -478,6 +484,22 @@ impl Transport {
                 }
                 packet.payload = Some(fragments);
                 packet.length = packet.payload.as_ref().unwrap().len() as u16;
+            }
+
+            if packet.flags.contains(PacketFlags::NAK) {
+                let p = packet.payload.as_ref().unwrap();
+                let status = Status::from_u16(u16::from_le_bytes([p[0], p[1]]));
+                return Err(match status {
+                    Some(Status::Failed) => TransportError::Failed,
+                    Some(Status::Invalid) => TransportError::Invalid,
+                    Some(Status::Timeout) => TransportError::Timeout,
+                    Some(Status::Busy) => TransportError::Busy,
+                    Some(Status::Checksum) => TransportError::Checksum,
+                    Some(Status::Sequence) => TransportError::Sequence,
+                    Some(Status::Overflow) => TransportError::Overflow,
+                    Some(Status::Fragment) => TransportError::Fragment,
+                    _ => TransportError::Unknown,
+                });
             }
 
             return Ok(packet);
