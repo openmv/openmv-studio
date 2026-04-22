@@ -133,14 +133,16 @@ impl Camera {
         t.reset_sequence();
 
         for attempt in 0..3 {
-            self.transport()?
-                .send_packet(Opcode::ProtoSync, 0, PacketFlags::empty(), None)?;
-            match self.transport()?.recv_packet(None) {
+            self.transport()?.send_packet(Opcode::ProtoSync, 0, PacketFlags::empty(), None)?;
+            std::thread::sleep(Duration::from_millis(10));
+            match self.transport()?.recv_packet(Some(Duration::from_millis(500))) {
                 Ok(_) => {
                     self.transport()?.reset_sequence();
                     return self.negotiate_caps();
                 }
-                Err(_) if attempt < 2 => continue,
+                Err(_) if attempt < 2 => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
                 Err(e) => {
                     log::error!("Resync failed after 3 attempts: {}", e);
                     return Err(e);
