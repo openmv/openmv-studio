@@ -178,10 +178,14 @@ impl Camera {
                         && opcode != Opcode::ProtoSetCaps =>
                 {
                     log::warn!(
-                        "send_cmd({:?}): {} (attempt {}/2), resyncing...",
-                        opcode, e, attempt + 1
+                        "send_cmd({:?}): {}, resyncing...",
+                        opcode, e
                     );
                     self.resync()?;
+                    log::info!(
+                        "send_cmd({:?}): resync ok, retrying",
+                        opcode
+                    );
                 }
                 _ => return result,
             }
@@ -652,7 +656,11 @@ impl Camera {
         };
 
         if let Err(e) = result {
-            log::warn!("process_cmd({:?}): {}", send_cmd, e);
+            if matches!(e, TransportError::IoError(_) | TransportError::NotConnected) {
+                log::error!("process_cmd({:?}): {}", send_cmd, e);
+            } else {
+                log::warn!("process_cmd({:?}): {}", send_cmd, e);
+            }
             if matches!(e, TransportError::IoError(_) | TransportError::NotConnected) {
                 self.disconnect();
             } else {
