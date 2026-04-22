@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone openmv and copy examples
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/openmv/openmv.git "${{ runner.temp }}/openmv"
+          rm -rf resources/examples
+          cp -r "${{ runner.temp }}/openmv/scripts/examples" resources/examples
+
+      - name: Clone openmv-doc
+        run: git clone --depth 1 https://github.com/openmv/openmv-doc.git "${{ runner.temp }}/openmv-doc"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Python dependencies
+        run: pip install sphinx
+
+      - name: Generate stubs
+        shell: bash
+        run: |
+          python3 "${{ runner.temp }}/openmv/tools/gen_api.py" \
+            --docs-dir "${{ runner.temp }}/openmv-doc/docs/_sources/library/" \
+            --pyi-dir resources/stubs
+
+      - name: Download dfu-util
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p src-tauri/binaries/dfu-util
+          gh release download --repo openmv/dfu-util \
+            --pattern "dfu-util-${{ matrix.target }}*" \
+            --dir src-tauri/binaries/dfu-util
+          chmod +x src-tauri/binaries/dfu-util/* 2>/dev/null || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libudev-dev \
+            patchelf
+
+      - name: Import Apple certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "OpenMV Studio ${{ github.ref_name }}"
+          releaseBody: "See assets for download links."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
