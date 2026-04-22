@@ -141,10 +141,14 @@ fn cmd_connect(
         e.to_string()
     })?;
 
-    // Cache info and spawn worker
+    let (verinfo, sysinfo) = camera.get_sys_info().map_err(|e| {
+        log::error!("get_sys_info failed: {}", e);
+        e.to_string()
+    })?;
+
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    st.sysinfo = camera.sysinfo.clone();
-    st.verinfo = camera.verinfo.clone();
+    st.sysinfo = Some(sysinfo);
+    st.verinfo = Some(verinfo);
 
     let (tx, rx) = mpsc::channel();
     let interval = Duration::from_millis(io_interval_ms);

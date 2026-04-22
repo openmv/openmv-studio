@@ -43,15 +43,19 @@ pub enum TransportError {
     Sequence,
     Overflow,
     Fragment,
-    Unknown,
     IoError(String),
     PayloadTooLarge,
     NotConnected,
+    Unknown,
 }
 
 impl TransportError {
     pub fn is_recoverable(&self) -> bool {
         matches!(self, Self::Sequence | Self::Checksum | Self::Timeout)
+    }
+
+    pub fn is_fatal(&self) -> bool {
+        matches!(self, Self::IoError(_) | Self::NotConnected)
     }
 }
 

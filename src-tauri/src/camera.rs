@@ -23,7 +23,7 @@ pub const TAG_SOFT_REBOOT: u8 = 0x10;
 pub const TAG_DISCONNECTED: u8 = 0x12;
 pub const TAG_ERROR: u8 = 0x13;
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub enum Command {
     RunScript(String),
     StopScript,
@@ -38,6 +38,28 @@ pub enum Command {
     Reset,
     Bootloader,
     Disconnect,
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::RunScript(_) => write!(f, "RunScript"),
+            Command::StopScript => write!(f, "StopScript"),
+            Command::EnableStreaming { enable, raw } => {
+                write!(f, "EnableStreaming(enable={}, raw={})", enable, raw)
+            }
+            Command::SetStreamSource(id) => write!(f, "SetStreamSource({})", id),
+            Command::GetMemory => write!(f, "GetMemory"),
+            Command::GetStats => write!(f, "GetStats"),
+            Command::ReadChannel(id) => write!(f, "ReadChannel({})", id),
+            Command::ReadStdout => write!(f, "ReadStdout"),
+            Command::ReadFrame => write!(f, "ReadFrame"),
+            Command::UpdateChannels => write!(f, "UpdateChannels"),
+            Command::Reset => write!(f, "Reset"),
+            Command::Bootloader => write!(f, "Bootloader"),
+            Command::Disconnect => write!(f, "Disconnect"),
+        }
+    }
 }
 
 impl Command {
@@ -77,8 +99,6 @@ pub struct Camera {
     event_counts: HashMap<u8, u32>,
     queue: VecDeque<Command>,
     max_payload: usize,
-    pub sysinfo: Option<SystemInfo>,
-    pub verinfo: Option<VersionInfo>,
 }
 
 impl Drop for Camera {
@@ -95,8 +115,6 @@ impl Camera {
             event_counts: HashMap::new(),
             queue: VecDeque::new(),
             max_payload: 4096,
-            sysinfo: None,
-            verinfo: None,
         }
     }
 
@@ -109,14 +127,11 @@ impl Camera {
         self.transport = Some(Transport::new(address, transport, MIN_PAYLOAD_SIZE)?);
         self.resync()?;
         self.update_channels()?;
-        self.cache_info();
         Ok(())
     }
 
     fn disconnect(&mut self) {
         self.transport = None;
-        self.sysinfo = None;
-        self.verinfo = None;
         self.channels.clear();
         self.event_counts.clear();
     }
@@ -136,13 +151,10 @@ impl Camera {
             self.transport()?
                 .send_packet(Opcode::ProtoSync, 0, PacketFlags::empty(), None)?;
 
-            let result = self
-                .transport()?
-                .recv_packet(None)
-                .and_then(|_| {
-                    self.transport()?.reset_sequence();
-                    self.negotiate_caps()
-                });
+            let result = self.transport()?.recv_packet(None).and_then(|_| {
+                self.transport()?.reset_sequence();
+                self.negotiate_caps()
+            });
 
             match result {
                 Ok(()) => return Ok(()),
@@ -160,6 +172,8 @@ impl Camera {
         opcode: Opcode,
         channel: u8,
         data: Option<&[u8]>,
+        resync: bool,
+        retry: bool,
     ) -> Result<Option<Vec<u8>>, TransportError> {
         for attempt in 0..2 {
             let result: Result<Option<Vec<u8>>, TransportError> = (|| {
@@ -172,20 +186,13 @@ impl Camera {
             })();
 
             match &result {
-                Err(e) if e.is_recoverable()
-                        && attempt == 0
-                        && opcode != Opcode::ProtoGetCaps
-                        && opcode != Opcode::ProtoSetCaps =>
-                {
-                    log::warn!(
-                        "send_cmd({:?}): {}, resyncing...",
-                        opcode, e
-                    );
+                Err(e) if e.is_recoverable() && resync && attempt == 0 => {
+                    log::warn!("send_cmd({:?}): {}, resyncing...", opcode, e);
                     self.resync()?;
-                    log::info!(
-                        "send_cmd({:?}): resync ok, retrying",
-                        opcode
-                    );
+                    if !retry {
+                        return result;
+                    }
+                    log::info!("send_cmd({:?}): resync ok, retrying", opcode);
                 }
                 _ => return result,
             }
@@ -195,8 +202,7 @@ impl Camera {
 
     fn negotiate_caps(&mut self) -> Result<(), TransportError> {
         let p = self
-            .send_cmd(Opcode::ProtoGetCaps, 0, None)?
-            .ok_or(TransportError::Timeout)?;
+            .send_cmd(Opcode::ProtoGetCaps, 0, None, false, false)?.unwrap();
         if p.len() < 6 {
             return Err(TransportError::IoError("Invalid caps".into()));
         }
@@ -223,16 +229,16 @@ impl Camera {
         let mut buf = vec![0u8; 16];
         buf[0..4].copy_from_slice(&flags.to_le_bytes());
         buf[4..6].copy_from_slice(&(max_payload as u16).to_le_bytes());
-        self.send_cmd(Opcode::ProtoSetCaps, 0, Some(&buf))?;
+        self.send_cmd(Opcode::ProtoSetCaps, 0, Some(&buf), false, false)?;
 
-        self.transport()?.set_caps(crc, seq, ack, events, max_payload);
+        self.transport()?
+            .set_caps(crc, seq, ack, events, max_payload);
         Ok(())
     }
 
     fn update_channels(&mut self) -> Result<(), TransportError> {
         let p = self
-            .send_cmd(Opcode::ChannelList, 0, None)?
-            .ok_or(TransportError::Timeout)?;
+            .send_cmd(Opcode::ChannelList, 0, None, true, true)?.unwrap();
         self.channels.clear();
         for i in 0..p.len() / 16 {
             let ofs = i * 16;
@@ -248,49 +254,16 @@ impl Camera {
         Ok(())
     }
 
-    fn cache_info(&mut self) {
-        if let Ok(Some(p)) = self.send_cmd(Opcode::ProtoVersion, 0, None) {
-            if p.len() >= 9 {
-                self.verinfo = Some(VersionInfo {
-                    protocol: [p[0], p[1], p[2]],
-                    bootloader: [p[3], p[4], p[5]],
-                    firmware: [p[6], p[7], p[8]],
-                });
-            }
-        }
-        if let Ok(Some(p)) = self.send_cmd(Opcode::SysInfo, 0, None) {
-            if p.len() >= 76 {
-                let u = |o: usize| u32::from_le_bytes([p[o], p[o + 1], p[o + 2], p[o + 3]]);
-                let usb_id = u(16);
-                let caps = u(40);
-                self.sysinfo = Some(SystemInfo {
-                    cpu_id: u(0),
-                    device_id: [u(4), u(8), u(12)],
-                    usb_vid: (usb_id >> 16) as u16,
-                    usb_pid: usb_id as u16,
-                    chip_ids: [u(20), u(24), u(28)],
-                    gpu_present: caps & (1 << 0) != 0,
-                    npu_present: caps & (1 << 1) != 0,
-                    isp_present: caps & (1 << 2) != 0,
-                    venc_present: caps & (1 << 3) != 0,
-                    jpeg_present: caps & (1 << 4) != 0,
-                    dram_present: caps & (1 << 5) != 0,
-                    crc_present: caps & (1 << 6) != 0,
-                    pmu_present: caps & (1 << 7) != 0,
-                    pmu_eventcnt: ((caps >> 8) & 0xFF) as u8,
-                    wifi_present: caps & (1 << 16) != 0,
-                    bt_present: caps & (1 << 17) != 0,
-                    sd_present: caps & (1 << 18) != 0,
-                    eth_present: caps & (1 << 19) != 0,
-                    usb_highspeed: caps & (1 << 20) != 0,
-                    multicore_present: caps & (1 << 21) != 0,
-                    flash_size_kb: u(48),
-                    ram_size_kb: u(52),
-                    framebuffer_size_kb: u(56),
-                    stream_buffer_size_kb: u(60),
-                });
-            }
-        }
+    pub fn get_sys_info(&mut self) -> Result<(VersionInfo, SystemInfo), TransportError> {
+        let p = self.send_cmd(Opcode::ProtoVersion, 0, None, true, true)?.unwrap();
+        let verinfo = VersionInfo::from_bytes(&p)
+            .ok_or_else(|| TransportError::IoError("Invalid ProtoVersion response".into()))?;
+
+        let p = self.send_cmd(Opcode::SysInfo, 0, None, true, true)?.unwrap();
+        let sysinfo = SystemInfo::from_bytes(&p)
+            .ok_or_else(|| TransportError::IoError("Invalid SysInfo response".into()))?;
+
+        Ok((verinfo, sysinfo))
     }
 
     // -- Channel helpers --
@@ -303,23 +276,16 @@ impl Camera {
     }
 
     fn ch_size(&mut self, id: u8) -> Result<u32, TransportError> {
-        let p = self
-            .send_cmd(Opcode::ChannelSize, id, None)?
-            .ok_or(TransportError::Timeout)?;
+        let p = self.send_cmd(Opcode::ChannelSize, id, None, true, false)?.unwrap();
         Ok(u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
     }
 
-    fn ch_read(
-        &mut self,
-        id: u8,
-        offset: u32,
-        length: u32,
-    ) -> Result<Vec<u8>, TransportError> {
+    fn ch_read(&mut self, id: u8, offset: u32, length: u32) -> Result<Vec<u8>, TransportError> {
         let mut req = [0u8; 8];
         req[0..4].copy_from_slice(&offset.to_le_bytes());
         req[4..8].copy_from_slice(&length.to_le_bytes());
-        self.send_cmd(Opcode::ChannelRead, id, Some(&req))?
-            .ok_or(TransportError::Timeout)
+        let p = self.send_cmd(Opcode::ChannelRead, id, Some(&req), true, false)?.unwrap();
+        Ok(p)
     }
 
     fn ch_write(&mut self, id: u8, data: &[u8]) -> Result<(), TransportError> {
@@ -330,7 +296,7 @@ impl Camera {
             buf[0..4].copy_from_slice(&offset.to_le_bytes());
             buf[4..8].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
             buf[8..].copy_from_slice(chunk);
-            self.send_cmd(Opcode::ChannelWrite, id, Some(&buf))?;
+            self.send_cmd(Opcode::ChannelWrite, id, Some(&buf), true, false)?;
         }
         Ok(())
     }
@@ -341,7 +307,7 @@ impl Camera {
         for (i, a) in args.iter().enumerate() {
             buf[4 + i * 4..8 + i * 4].copy_from_slice(&a.to_le_bytes());
         }
-        self.send_cmd(Opcode::ChannelIoctl, id, Some(&buf))?;
+        self.send_cmd(Opcode::ChannelIoctl, id, Some(&buf), true, false)?;
         Ok(())
     }
 
@@ -370,9 +336,9 @@ impl Camera {
         self.ch_ioctl(id, ioctl::STREAM_SOURCE, &[chip_id])
     }
 
-    fn do_reset(&mut self, opcode: Opcode) -> Result<(), TransportError> {
+    fn reset(&mut self, opcode: Opcode) -> Result<(), TransportError> {
         // Send reset/boot command; ignore response since the camera will hard-reset.
-        let _ = self.send_cmd(opcode, 0, None);
+        let _ = self.send_cmd(opcode, 0, None, false, false);
         self.disconnect();
         Ok(())
     }
@@ -381,8 +347,7 @@ impl Camera {
 
     fn memory_stats(&mut self) -> Result<Vec<MemEntry>, TransportError> {
         let p = self
-            .send_cmd(Opcode::SysMemory, 0, None)?
-            .ok_or(TransportError::Timeout)?;
+            .send_cmd(Opcode::SysMemory, 0, None, true, true)?.unwrap();
         if p.len() < 4 {
             return Err(TransportError::IoError(
                 "Invalid SYS_MEMORY response".into(),
@@ -410,8 +375,7 @@ impl Camera {
 
     fn device_stats(&mut self) -> Result<ProtoStats, TransportError> {
         let p = self
-            .send_cmd(Opcode::ProtoStats, 0, None)?
-            .ok_or(TransportError::Timeout)?;
+            .send_cmd(Opcode::ProtoStats, 0, None, true, true)?.unwrap();
         if p.len() < 32 {
             return Err(TransportError::IoError(
                 "Invalid PROTO_STATS response".into(),
@@ -439,7 +403,7 @@ impl Camera {
 
     // -- Worker command handlers --
 
-    fn do_read_stdout(&mut self, tx: &Channel) -> Result<(), TransportError> {
+    fn read_stdout(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let id = self.ch("stdout")?;
         let size = self.ch_size(id)?;
         if size == 0 {
@@ -453,20 +417,11 @@ impl Camera {
         Ok(())
     }
 
-    fn do_read_frame(&mut self, tx: &Channel) -> Result<(), TransportError> {
+    fn read_frame(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let id = self.ch("stream")?;
-        match self.send_cmd(Opcode::ChannelLock, id, None) {
-            Err(TransportError::Busy) => {
-                // Don't re-enqueue; the next stream event will trigger
-                // another ReadFrame. Retrying immediately floods the
-                // camera with ChannelLock requests.
-                return Ok(());
-            }
-            Err(e) => return Err(e),
-            Ok(_) => {}
-        }
+        self.send_cmd(Opcode::ChannelLock, id, None, true, true)?;
         let result = self.read_frame_locked(id, tx);
-        let _ = self.send_cmd(Opcode::ChannelUnlock, id, None);
+        let _ = self.send_cmd(Opcode::ChannelUnlock, id, None, false, false);
         result
     }
 
@@ -508,7 +463,7 @@ impl Camera {
         Ok(())
     }
 
-    fn do_get_memory(&mut self, tx: &Channel) -> Result<(), TransportError> {
+    fn get_memory(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let entries = self.memory_stats()?;
         let mut buf = Vec::with_capacity(1 + 4 + entries.len() * 24);
         buf.push(TAG_MEMORY);
@@ -529,7 +484,7 @@ impl Camera {
         Ok(())
     }
 
-    fn do_get_stats(&mut self, tx: &Channel) -> Result<(), TransportError> {
+    fn get_stats(&mut self, tx: &Channel) -> Result<(), TransportError> {
         let stats = self.device_stats()?;
         let channels_info = self.get_channels();
         let mut buf = Vec::with_capacity(1 + 36 + channels_info.len() * 20);
@@ -564,7 +519,7 @@ impl Camera {
         Ok(())
     }
 
-    fn do_read_channel(&mut self, id: u8, tx: &Channel) -> Result<(), TransportError> {
+    fn read_channel(&mut self, id: u8, tx: &Channel) -> Result<(), TransportError> {
         let name = self
             .channels
             .iter()
@@ -604,7 +559,9 @@ impl Camera {
                 self.process_cmd(send_cmd, tx);
             } else {
                 // No commands to process - poll events.
-                let _ = self.transport().and_then(|t| t.recv_packet(Some(Duration::from_millis(1))));
+                let _ = self
+                    .transport()
+                    .and_then(|t| t.recv_packet(Some(Duration::from_millis(1))));
             }
 
             // Process collected events during command/events polling.
@@ -644,29 +601,26 @@ impl Camera {
             Command::StopScript => self.stop_script(),
             Command::EnableStreaming { enable, raw } => self.enable_streaming(*enable, *raw),
             Command::SetStreamSource(chip_id) => self.set_stream_source(*chip_id),
-            Command::GetMemory => self.do_get_memory(tx),
-            Command::GetStats => self.do_get_stats(tx),
-            Command::ReadChannel(id) => self.do_read_channel(*id, tx),
-            Command::ReadStdout => self.do_read_stdout(tx),
-            Command::ReadFrame => self.do_read_frame(tx),
+            Command::GetMemory => self.get_memory(tx),
+            Command::GetStats => self.get_stats(tx),
+            Command::ReadChannel(id) => self.read_channel(*id, tx),
+            Command::ReadStdout => self.read_stdout(tx),
+            Command::ReadFrame => self.read_frame(tx),
             Command::UpdateChannels => self.update_channels(),
-            Command::Reset => self.do_reset(Opcode::SysReset),
-            Command::Bootloader => self.do_reset(Opcode::SysBoot),
+            Command::Reset => self.reset(Opcode::SysReset),
+            Command::Bootloader => self.reset(Opcode::SysBoot),
             Command::Disconnect => unreachable!(),
         };
 
         if let Err(e) = result {
-            if matches!(e, TransportError::IoError(_) | TransportError::NotConnected) {
+            if e.is_fatal() {
                 log::error!("process_cmd({:?}): {}", send_cmd, e);
-            } else {
-                log::warn!("process_cmd({:?}): {}", send_cmd, e);
-            }
-            if matches!(e, TransportError::IoError(_) | TransportError::NotConnected) {
                 self.disconnect();
-            } else {
-                // Drop queued polling commands so they don't each
-                // trigger their own resync when the camera is busy.
+            } else if e.is_recoverable() {
+                log::warn!("process_cmd({:?}): {}", send_cmd, e);
                 self.queue.retain(|c| !c.is_idempotent());
+            } else if !matches!(e, TransportError::Busy) {
+                log::warn!("process_cmd({:?}): {}", send_cmd, e);
             }
             let mut buf = vec![TAG_ERROR];
             buf.extend_from_slice(e.to_string().as_bytes());

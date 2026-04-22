@@ -186,6 +186,19 @@ pub struct VersionInfo {
     pub firmware: [u8; 3],
 }
 
+impl VersionInfo {
+    pub fn from_bytes(p: &[u8]) -> Option<Self> {
+        if p.len() < 9 {
+            return None;
+        }
+        Some(Self {
+            protocol: [p[0], p[1], p[2]],
+            bootloader: [p[3], p[4], p[5]],
+            firmware: [p[6], p[7], p[8]],
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
     pub cpu_id: u32,
@@ -214,6 +227,43 @@ pub struct SystemInfo {
     pub ram_size_kb: u32,
     pub framebuffer_size_kb: u32,
     pub stream_buffer_size_kb: u32,
+}
+
+impl SystemInfo {
+    pub fn from_bytes(p: &[u8]) -> Option<Self> {
+        if p.len() < 76 {
+            return None;
+        }
+        let u = |o: usize| u32::from_le_bytes([p[o], p[o + 1], p[o + 2], p[o + 3]]);
+        let usb_id = u(16);
+        let caps = u(40);
+        Some(Self {
+            cpu_id: u(0),
+            device_id: [u(4), u(8), u(12)],
+            usb_vid: (usb_id >> 16) as u16,
+            usb_pid: usb_id as u16,
+            chip_ids: [u(20), u(24), u(28)],
+            gpu_present: caps & (1 << 0) != 0,
+            npu_present: caps & (1 << 1) != 0,
+            isp_present: caps & (1 << 2) != 0,
+            venc_present: caps & (1 << 3) != 0,
+            jpeg_present: caps & (1 << 4) != 0,
+            dram_present: caps & (1 << 5) != 0,
+            crc_present: caps & (1 << 6) != 0,
+            pmu_present: caps & (1 << 7) != 0,
+            pmu_eventcnt: ((caps >> 8) & 0xFF) as u8,
+            wifi_present: caps & (1 << 16) != 0,
+            bt_present: caps & (1 << 17) != 0,
+            sd_present: caps & (1 << 18) != 0,
+            eth_present: caps & (1 << 19) != 0,
+            usb_highspeed: caps & (1 << 20) != 0,
+            multicore_present: caps & (1 << 21) != 0,
+            flash_size_kb: u(48),
+            ram_size_kb: u(52),
+            framebuffer_size_kb: u(56),
+            stream_buffer_size_kb: u(60),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
