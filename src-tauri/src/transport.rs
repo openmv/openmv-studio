@@ -399,6 +399,13 @@ impl Transport {
 
         loop {
             if Instant::now() >= deadline {
+                let elapsed = timeout.unwrap_or(self.timeout);
+                if elapsed.as_millis() > 10 {
+                    log::warn!(
+                        "recv_packet: timeout after {:?}, buf={} bytes, fragments={}",
+                        elapsed, self.available(), fragments.len()
+                    );
+                }
                 return Err(TransportError::Timeout);
             }
 
@@ -421,6 +428,10 @@ impl Transport {
 
             // Sequence check
             if !self.check_seq(packet.sequence, packet.opcode, packet.flags) {
+                log::warn!(
+                    "recv_packet: sequence mismatch: got={} expected={} opcode=0x{:02x} flags={:?}",
+                    packet.sequence, self.sequence, packet.opcode, packet.flags
+                );
                 return Err(TransportError::Sequence);
             }
 
@@ -482,8 +493,9 @@ impl Transport {
 
             if packet.flags.contains(PacketFlags::NAK) {
                 let p = packet.payload.as_ref().unwrap();
-                let status = Status::from_u16(u16::from_le_bytes([p[0], p[1]]));
-                return Err(match status {
+                let raw = u16::from_le_bytes([p[0], p[1]]);
+                let status = Status::from_u16(raw);
+                let err = match status {
                     Some(Status::Failed) => TransportError::Failed,
                     Some(Status::Invalid) => TransportError::Invalid,
                     Some(Status::Timeout) => TransportError::Timeout,
@@ -493,7 +505,12 @@ impl Transport {
                     Some(Status::Overflow) => TransportError::Overflow,
                     Some(Status::Fragment) => TransportError::Fragment,
                     _ => TransportError::Unknown,
-                });
+                };
+                log::warn!(
+                    "recv_packet: NAK opcode=0x{:02x} ch={} status={:?}(0x{:04x}) seq={}",
+                    packet.opcode, packet.channel, status, raw, packet.sequence
+                );
+                return Err(err);
             }
 
             return Ok(packet);

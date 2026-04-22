@@ -133,19 +133,22 @@ impl Camera {
         t.reset_sequence();
 
         for attempt in 0..3 {
-            self.transport()?.send_packet(Opcode::ProtoSync, 0, PacketFlags::empty(), None)?;
-            std::thread::sleep(Duration::from_millis(10));
-            match self.transport()?.recv_packet(None) {
-                Ok(_) => {
+            self.transport()?
+                .send_packet(Opcode::ProtoSync, 0, PacketFlags::empty(), None)?;
+
+            let result = self
+                .transport()?
+                .recv_packet(None)
+                .and_then(|_| {
                     self.transport()?.reset_sequence();
-                    return self.negotiate_caps();
-                }
-                Err(_) if attempt < 2 => {
+                    self.negotiate_caps()
+                });
+
+            match result {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt == 2 => return Err(e),
+                Err(_) => {
                     std::thread::sleep(Duration::from_millis(100));
-                }
-                Err(e) => {
-                    log::error!("Resync failed after 3 attempts: {}", e);
-                    return Err(e);
                 }
             }
         }
@@ -169,8 +172,15 @@ impl Camera {
             })();
 
             match &result {
-                Err(e) if e.is_recoverable() && attempt == 0 => {
-                    log::warn!("Protocol error, resyncing...");
+                Err(e) if e.is_recoverable()
+                        && attempt == 0
+                        && opcode != Opcode::ProtoGetCaps
+                        && opcode != Opcode::ProtoSetCaps =>
+                {
+                    log::warn!(
+                        "send_cmd({:?}): {} (attempt {}/2), resyncing...",
+                        opcode, e, attempt + 1
+                    );
                     self.resync()?;
                 }
                 _ => return result,
@@ -443,7 +453,9 @@ impl Camera {
         let id = self.ch("stream")?;
         match self.send_cmd(Opcode::ChannelLock, id, None) {
             Err(TransportError::Busy) => {
-                self.enqueue(Command::ReadFrame);
+                // Don't re-enqueue; the next stream event will trigger
+                // another ReadFrame. Retrying immediately floods the
+                // camera with ChannelLock requests.
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -643,6 +655,10 @@ impl Camera {
             log::warn!("process_cmd({:?}): {}", send_cmd, e);
             if matches!(e, TransportError::IoError(_) | TransportError::NotConnected) {
                 self.disconnect();
+            } else {
+                // Drop queued polling commands so they don't each
+                // trigger their own resync when the camera is busy.
+                self.queue.retain(|c| !c.is_idempotent());
             }
             let mut buf = vec![TAG_ERROR];
             buf.extend_from_slice(e.to_string().as_bytes());
