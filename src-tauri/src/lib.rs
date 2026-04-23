@@ -717,7 +717,9 @@ fn cmd_update_recent_menu(paths: Vec<String>, app: tauri::AppHandle) -> Result<(
 fn build_menu(
     app: &tauri::App,
 ) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-    // macOS app menu (first submenu becomes the app name menu)
+    // macOS app menu (first submenu becomes the app name menu).
+    // On Linux/Windows this menu is skipped -- Quit goes into File instead.
+    #[cfg(target_os = "macos")]
     let app_menu = SubmenuBuilder::new(app, "OpenMV Studio")
         .about(None)
         .separator()
@@ -740,7 +742,8 @@ fn build_menu(
         .text("recent-none", "(No recent files)")
         .build()?;
 
-    let file = SubmenuBuilder::new(app, "File")
+    let mut file_builder = SubmenuBuilder::new(app, "File");
+    file_builder = file_builder
         .text("new", "New")
         .text("open", "Open...")
         .item(&open_recent)
@@ -748,8 +751,20 @@ fn build_menu(
         .text("save", "Save")
         .text("save-as", "Save As...")
         .separator()
-        .close_window()
-        .build()?;
+        .close_window();
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        file_builder = file_builder
+            .separator()
+            .item(
+                &MenuItemBuilder::with_id("quit", "Quit")
+                    .accelerator("CmdOrCtrl+Q")
+                    .build(app)?,
+            );
+    }
+
+    let file = file_builder.build()?;
 
     let edit = SubmenuBuilder::new(app, "Edit")
         .undo()
@@ -798,8 +813,14 @@ fn build_menu(
         .text("about", "About OpenMV Studio")
         .build()?;
 
+    #[cfg(target_os = "macos")]
     let menu = MenuBuilder::new(app)
         .items(&[&app_menu, &file, &edit, &tools, &device, &view, &help])
+        .build()?;
+
+    #[cfg(not(target_os = "macos"))]
+    let menu = MenuBuilder::new(app)
+        .items(&[&file, &edit, &tools, &device, &view, &help])
         .build()?;
 
     Ok(menu)
