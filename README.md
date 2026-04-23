@@ -74,12 +74,44 @@ Communication is hybrid event-driven and polling:
 
 ## Development
 
-```bash
-# Prerequisites: Rust and Node.js
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh  # Rust toolchain
-# Install Node.js via your preferred method (nvm, brew, etc.)
+### Prerequisites
 
-# Build and run
+- Rust toolchain (`rustup`)
+- Node.js (v22+)
+- Python 3 with `sphinx` (`pip install sphinx`)
+
+### Fetch resources
+
+The build requires examples, Python stubs, and dfu-util which are not checked
+into the repo. Clone the upstream repos into a temp directory and run the
+setup steps below (matching what the CI workflow does):
+
+```bash
+TMPDIR=$(mktemp -d)
+
+# 1. Examples -- copy from openmv repo
+git clone --depth 1 https://github.com/openmv/openmv.git "$TMPDIR/openmv"
+rm -rf resources/examples
+cp -r "$TMPDIR/openmv/scripts/examples" resources/examples
+
+# 2. Python stubs -- generated from openmv-doc via gen_api.py
+git clone --depth 1 https://github.com/openmv/openmv-doc.git "$TMPDIR/openmv-doc"
+python3 "$TMPDIR/openmv/tools/gen_api.py" \
+  --docs-dir "$TMPDIR/openmv-doc/docs/_sources/library/" \
+  --pyi-dir resources/stubs
+
+# 3. dfu-util binary (adjust TARGET for your platform)
+TARGET=$(rustc -vV | grep host | awk '{print $2}')
+mkdir -p src-tauri/binaries/dfu-util
+gh release download --repo openmv/dfu-util \
+  --pattern "dfu-util-${TARGET}*" \
+  --dir src-tauri/binaries/dfu-util
+chmod +x src-tauri/binaries/dfu-util/*
+```
+
+### Build and run
+
+```bash
 npm install              # Install all deps (including Tauri CLI)
 npx tauri dev            # Dev mode with hot-reload
 npx tauri build          # Build distributable (DMG/MSI/DEB)
