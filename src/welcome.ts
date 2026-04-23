@@ -7,6 +7,10 @@
 // Welcome screen shown when no files are open.
 // Provides quick-action buttons for New File and Open File.
 
+import { isMac } from "./shortcuts";
+
+const mod = isMac ? "Cmd" : "Ctrl";
+
 const WELCOME_HTML = `
   <div class="welcome-inner">
     <img src="/openmv-logo.svg" class="welcome-logo-img" alt="OpenMV">
@@ -26,13 +30,13 @@ const WELCOME_HTML = `
       <h2>Shortcuts</h2>
       <div class="welcome-shortcut-grid">
         <div class="ws-row"><span class="ws-key">Ctrl+E</span><span class="ws-desc">Connect / Disconnect</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+R</span><span class="ws-desc">Run / Stop Script</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+N</span><span class="ws-desc">New File</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+O</span><span class="ws-desc">Open File</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+S</span><span class="ws-desc">Save</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+W</span><span class="ws-desc">Close Tab</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+,</span><span class="ws-desc">Settings</span></div>
-        <div class="ws-row"><span class="ws-key">Cmd+=/-</span><span class="ws-desc">Zoom In / Out</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+R</span><span class="ws-desc">Run / Stop Script</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+N</span><span class="ws-desc">New File</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+O</span><span class="ws-desc">Open File</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+S</span><span class="ws-desc">Save</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+W</span><span class="ws-desc">Close Tab</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+,</span><span class="ws-desc">Settings</span></div>
+        <div class="ws-row"><span class="ws-key">${mod}+=/-</span><span class="ws-desc">Zoom In / Out</span></div>
       </div>
     </div>
   </div>

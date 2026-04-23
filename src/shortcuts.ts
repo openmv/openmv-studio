@@ -23,6 +23,9 @@ export interface ShortcutBinding {
   action: () => void;
 }
 
+// On macOS the primary modifier is Command (metaKey), everywhere else Ctrl.
+export const isMac = navigator.platform.startsWith("Mac");
+
 // User overrides loaded from settings (shortcut id -> display string)
 export let shortcutOverrides: Record<string, string> = {};
 
@@ -89,7 +92,7 @@ export function shortcutToString(s: Shortcut): string {
   const parts: string[] = [];
 
   if (s.meta) {
-    parts.push("Cmd");
+    parts.push(isMac ? "Cmd" : "Ctrl");
   }
 
   if (s.ctrl) {
@@ -143,10 +146,25 @@ function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
   const keyMatch =
     e.key.toLowerCase() === s.key.toLowerCase() || e.key === s.key;
 
+  // "meta" means Cmd on macOS, Ctrl on Linux/Windows.
+  // "ctrl" is always the physical Ctrl key -- on Linux/Windows a shortcut
+  // with meta matches ctrlKey, so we must not double-match it as ctrl too.
+  let metaMatch: boolean;
+  let ctrlMatch: boolean;
+
+  if (isMac) {
+    metaMatch = !!s.meta === e.metaKey;
+    ctrlMatch = !!s.ctrl === e.ctrlKey;
+  } else {
+    const wantCtrl = !!s.meta || !!s.ctrl;
+    metaMatch = true;
+    ctrlMatch = wantCtrl === e.ctrlKey;
+  }
+
   return (
     keyMatch &&
-    !!s.meta === e.metaKey &&
-    !!s.ctrl === e.ctrlKey &&
+    metaMatch &&
+    ctrlMatch &&
     !!s.shift === e.shiftKey &&
     !!s.alt === e.altKey
   );
