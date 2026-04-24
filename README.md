@@ -4,6 +4,8 @@ A modern IDE for OpenMV cameras built on Tauri 2 + Monaco Editor.
 
 > 🚧 This is an experimental rewrite of the OpenMV IDE that's not yet ready for general use.
 
+<p align="center"><img width="800" height="519" alt="openmv-studio" src="https://github.com/user-attachments/assets/78e1a322-6dc3-4cf9-b840-f912a58cc6e6" /></p>
+
 ## Architecture
 
 TypeScript frontend with a Rust backend connected via Tauri IPC. The backend
