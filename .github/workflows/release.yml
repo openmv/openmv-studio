@@ -39,31 +39,11 @@ jobs:
             exit 1
           fi
 
-      - name: Clone openmv and copy examples
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/openmv/openmv.git "${{ runner.temp }}/openmv"
-          rm -rf resources/examples
-          cp -r "${{ runner.temp }}/openmv/scripts/examples" resources/examples
-
-      - name: Clone openmv-doc
-        run: git clone --depth 1 https://github.com/openmv/openmv-doc.git "${{ runner.temp }}/openmv-doc"
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
-      - name: Install Python dependencies
-        run: pip install sphinx
-
-      - name: Generate stubs
-        shell: bash
-        run: |
-          python3 "${{ runner.temp }}/openmv/tools/gen_api.py" \
-            --docs-dir "${{ runner.temp }}/openmv-doc/docs/_sources/library/" \
-            --pyi-dir resources/stubs
-
-      - name: Install SDK tools
+      - name: Install resources
         shell: bash
         run: scripts/setup.sh
 
