@@ -6,6 +6,7 @@
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
+use crate::resolve_resource;
 
 pub struct DfuConfig {
     pub vid_pid: String,
@@ -48,10 +49,11 @@ pub fn erase_filesystem(app: &AppHandle, config: &DfuConfig) -> Result<(), Strin
         let _ = app.emit("dfu-progress", &msg);
         log::debug!("dfu-util {:?}", args);
 
+        let dfu_name = format!("tools/dfu-util{}", std::env::consts::EXE_SUFFIX);
+        let dfu_path = resolve_resource(app, &dfu_name);
         let sidecar = app
             .shell()
-            .sidecar("dfu-util")
-            .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+            .command(&dfu_path)
             .args(&args);
 
         let (mut rx, _child) = sidecar

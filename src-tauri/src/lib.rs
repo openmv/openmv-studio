@@ -36,7 +36,7 @@ struct AppState {
     verinfo: Option<VersionInfo>,
 }
 
-fn resolve_resource(app: &tauri::AppHandle, name: &str) -> std::path::PathBuf {
+pub(crate) fn resolve_resource(app: &tauri::AppHandle, name: &str) -> std::path::PathBuf {
     let path = format!("resources/{}", name);
     app.path()
         .resolve(&path, tauri::path::BaseDirectory::Resource)

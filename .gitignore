@@ -1,8 +1,8 @@
 node_modules/
 dist/
 src-tauri/target/
-src-tauri/binaries/
 resources/examples/
 resources/stubs/
+resources/tools/
 *.swp
 .DS_Store

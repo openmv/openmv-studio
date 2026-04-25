@@ -84,7 +84,7 @@ Communication is hybrid event-driven and polling:
 
 ### Fetch resources
 
-The build requires examples, Python stubs, and dfu-util which are not checked
+The build requires examples, Python stubs, and SDK tools which are not checked
 into the repo. Clone the upstream repos into a temp directory and run the
 setup steps below (matching what the CI workflow does):
 
@@ -102,13 +102,8 @@ python3 "$TMPDIR/openmv/tools/gen_api.py" \
   --docs-dir "$TMPDIR/openmv-doc/docs/_sources/library/" \
   --pyi-dir resources/stubs
 
-# 3. dfu-util binary (adjust TARGET for your platform)
-TARGET=$(rustc -vV | grep host | awk '{print $2}')
-mkdir -p src-tauri/binaries/dfu-util
-gh release download --repo openmv/dfu-util \
-  --pattern "dfu-util-${TARGET}*" \
-  --dir src-tauri/binaries/dfu-util
-chmod +x src-tauri/binaries/dfu-util/*
+# 3. SDK tools (dfu-util, stedgeai, python)
+scripts/setup.sh
 ```
 
 ### Build and run
