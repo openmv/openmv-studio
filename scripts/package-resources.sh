@@ -117,8 +117,10 @@ package_boards() {
         exit 1
     fi
     echo "Boards tag: ${version}"
-
     git -C "$src" checkout "$version"
+
+    # Strip leading v for consistency with other resource names
+    version="${version#v}"
 
     # Remove git metadata
     rm -rf "$src/.git" "$src/.gitignore"
