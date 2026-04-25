@@ -108,17 +108,20 @@ package_boards() {
     echo "=== Packaging boards ==="
     local src="$TMPDIR/boards"
 
-    git clone --depth 1 "$BOARDS_REPO" "$src"
+    git clone "$BOARDS_REPO" "$src"
 
     local version
-    if [ -f "$src/version.txt" ]; then
-        version="$(cat "$src/version.txt" | tr -d '[:space:]')"
-    else
-        version="$(date +%Y-%m-%d)"
+    version=$(git -C "$src" describe --tags --abbrev=0 2>/dev/null) || true
+    if [ -z "$version" ]; then
+        echo "ERROR: No tags found in $BOARDS_REPO" >&2
+        exit 1
     fi
+    echo "Boards tag: ${version}"
+
+    git -C "$src" checkout "$version"
 
     # Remove git metadata
-    rm -rf "$src/.git" "$src/.gitignore" "$src/version.txt"
+    rm -rf "$src/.git" "$src/.gitignore"
 
     local archive_name="boards-${version}"
     mv "$src" "$TMPDIR/${archive_name}"
