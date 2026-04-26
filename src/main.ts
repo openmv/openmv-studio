@@ -1234,8 +1234,10 @@ loadSettings().then(async () => {
   const needsSetup = status.some((s) => s.needs_update);
 
   if (needsSetup) {
-    await openResourceWindow("setup");
-    await relaunch();
+    const downloaded = await openResourceWindow("setup");
+    if (downloaded) {
+      await relaunch();
+    }
     return;
   }
 

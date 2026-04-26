@@ -98,13 +98,13 @@
 
     btnClose.addEventListener("click", function() {
       if (done) {
-        appWindow.close();
+        appWindow.destroy();
       }
     });
 
     document.addEventListener("keydown", function(e) {
       if (e.key === "Escape" && done) {
-        appWindow.close();
+        appWindow.destroy();
       }
     });
   </script>

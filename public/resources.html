@@ -261,9 +261,10 @@
       // In update mode, dismissing is fine - mark as done so app continues
       if (mode === "update") {
         invoke("cmd_setup_done").then(function() {
-          appWindow.close();
+          appWindow.destroy();
         });
       } else {
+        // In setup mode, use close() to trigger CloseRequested -> quit
         appWindow.close();
       }
     });
@@ -272,7 +273,7 @@
       // Mark setup as complete so the close handler does not quit the app
       invoke("cmd_setup_done").then(function() {
         emit("setup-complete");
-        appWindow.close();
+        appWindow.destroy();
       });
     }
 

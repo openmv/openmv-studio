@@ -508,7 +508,7 @@
     // Reset all
     document.getElementById("set-reset").onclick = function() {
       changed("reset", true);
-      appWindow.close();
+      appWindow.destroy();
     };
 
     // --- Shortcuts ---
@@ -630,7 +630,7 @@
 
     document.addEventListener("keydown", function(e) {
       if (e.key === "Escape") {
-        appWindow.close();
+        appWindow.destroy();
         return;
       }
 
