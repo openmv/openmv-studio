@@ -5,10 +5,13 @@ node_modules: package.json package-lock.json
 	npm install
 	@touch $@
 
-run: node_modules  ## Dev mode with hot-reload
+ensure-tauri:
+	@command -v cargo-tauri >/dev/null 2>&1 || cargo install tauri-cli
+
+run: node_modules ensure-tauri  ## Dev mode with hot-reload
 	cargo tauri dev
 
-build: node_modules  ## Build distributable (DMG/MSI/DEB)
+build: node_modules ensure-tauri  ## Build distributable (DMG/MSI/DEB)
 	cargo tauri build
 
 check:          ## Type-check TS + Rust without building
