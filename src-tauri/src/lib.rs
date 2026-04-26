@@ -940,6 +940,11 @@ pub fn run() {
             }
 
             let menu = build_menu(app)?;
+            // On macOS the menu bar is app-level. On Linux, setting it
+            // per-window prevents child windows from duplicating it.
+            #[cfg(target_os = "macos")]
+            app.set_menu(menu)?;
+            #[cfg(not(target_os = "macos"))]
             if let Some(main_win) = app.get_webview_window("main") {
                 main_win.set_menu(menu)?;
             }
