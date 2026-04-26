@@ -111,7 +111,7 @@ package_boards() {
     git clone "$BOARDS_REPO" "$src"
 
     local version
-    version=$(git -C "$src" describe --tags --abbrev=0 2>/dev/null) || true
+    version=$(git -C "$src" tag --sort=-v:refname | head -1) || true
     if [ -z "$version" ]; then
         echo "ERROR: No tags found in $BOARDS_REPO" >&2
         exit 1
