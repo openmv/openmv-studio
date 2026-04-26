@@ -20,6 +20,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-log": "^2.8.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-store": "^2.4.2",
     "@typefox/pyright-browser": "^1.1.299",
     "cbor-x": "^1.6.4",

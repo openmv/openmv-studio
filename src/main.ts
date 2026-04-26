@@ -1215,7 +1215,11 @@ function hideUpdateIndicator() {
 
 document.getElementById("status-updates")?.addEventListener("click", async () => {
   hideUpdateIndicator();
-  await openResourceWindow("update");
+  const downloaded = await openResourceWindow("update");
+  if (downloaded) {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  }
 });
 
 // --- Load settings then finalize UI ---
@@ -1230,13 +1234,14 @@ loadSettings().then(async () => {
 
   if (needsSetup) {
     await openResourceWindow("setup");
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+    return;
   }
 
   renderTabs();
   startFileWatching();
   updateRecentMenu();
-
-  document.querySelector<HTMLElement>(".right-panel")!.style.visibility = "";
 
   if (!state.filterExamples) {
     loadExamples();

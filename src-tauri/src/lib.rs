@@ -900,6 +900,7 @@ pub fn run() {
             resources::cmd_resource_path,
             resources::cmd_list_stubs,
         ])
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()

@@ -18,9 +18,10 @@ export interface ResourceStatus {
   needs_update: boolean;
 }
 
+// Returns true if resources were downloaded, false if dismissed.
 export async function openResourceWindow(
   mode: "setup" | "update" = "setup",
-): Promise<void> {
+): Promise<boolean> {
   const scale = state.uiScale;
   const title =
     mode === "update" ? "Resource Updates" : "OpenMV Studio Setup";
@@ -40,13 +41,18 @@ export async function openResourceWindow(
     win.once("tauri://error", (e) => reject(e));
   });
 
-  // Wait for the window to signal completion or be closed
-  await new Promise<void>((resolve) => {
+  // Wait for the window to signal completion or be closed.
+  // Returns true if downloads completed, false if dismissed.
+  return new Promise<boolean>((resolve) => {
+    let completed = false;
     listen("setup-complete", () => {
-      resolve();
+      completed = true;
+      resolve(true);
     });
     win.once("tauri://destroyed", () => {
-      resolve();
+      if (!completed) {
+        resolve(false);
+      }
     });
   });
 }
