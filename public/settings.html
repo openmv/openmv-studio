@@ -170,6 +170,31 @@
       margin-top: 12px; font-size: 11px; color: var(--text-muted);
       text-align: center;
     }
+
+    .resource-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 0;
+      font-size: 13px; color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .resource-row:last-child { border-bottom: none; }
+    .resource-name {
+      font-weight: 500; color: var(--text-secondary);
+      text-transform: capitalize;
+    }
+    .resource-version {
+      font-family: var(--font-code); font-size: 12px;
+      color: var(--text-tertiary);
+    }
+    .resource-version.not-installed {
+      color: var(--text-muted); font-style: italic;
+    }
+    .resources-heading {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; margin-top: 16px;
+    }
+    .resources-heading:first-child { margin-top: 0; }
   </style>
 </head>
 <body>
@@ -189,6 +214,10 @@
     <button class="settings-icon-tab" data-stab="framebuffer">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
       <span>Frame Buffer</span>
+    </button>
+    <button class="settings-icon-tab" data-stab="packages">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      <span>Packages</span>
     </button>
     <button class="settings-icon-tab" data-stab="shortcuts">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h8M6 16h.01M18 16h.01M10 16h4"/></svg>
@@ -216,10 +245,6 @@
     <div class="pref-row">
       <span class="pref-label">Filter Examples</span>
       <label class="switch"><input type="checkbox" id="set-filter-examples"><span class="switch-slider"></span></label>
-    </div>
-    <div class="pref-row">
-      <span class="pref-label">Development Channel</span>
-      <label class="switch"><input type="checkbox" id="set-dev-channel"><span class="switch-slider"></span></label>
     </div>
     <div class="pref-row">
       <span class="pref-label"></span>
@@ -302,6 +327,18 @@
     </div>
   </div>
 
+  <div class="settings-pane" data-stab="packages" style="display:none">
+    <div class="pref-row">
+      <span class="pref-label">Update Channel</span>
+      <select class="pref-select" id="set-channel">
+        <option value="stable">Stable</option>
+        <option value="development">Development</option>
+      </select>
+    </div>
+    <div class="resources-heading">Installed Versions</div>
+    <div id="resources-list"></div>
+  </div>
+
   <div class="settings-pane" data-stab="shortcuts" style="display:none">
     <div class="shortcuts-list" id="shortcuts-list"></div>
     <p class="shortcut-hint">Click a shortcut, then press the new key combination to rebind.</p>
@@ -357,8 +394,8 @@
       // Filter examples
       document.getElementById("set-filter-examples").checked = d.filterExamples;
 
-      // Development channel
-      document.getElementById("set-dev-channel").checked = (d.resourceChannel === "development");
+      // Channel
+      document.getElementById("set-channel").value = d.resourceChannel || "stable";
 
       // Editor
       document.getElementById("set-font-size").value = d.fontSize;
@@ -399,6 +436,30 @@
       shortcuts = d.shortcuts || [];
       tabShortcuts = d.tabShortcuts || { prev: [], next: [] };
       buildShortcuts();
+
+      // Resources
+      var resList = document.getElementById("resources-list");
+      resList.innerHTML = "";
+      var resources = d.resources || [];
+      for (var i = 0; i < resources.length; i++) {
+        var res = resources[i];
+        var row = document.createElement("div");
+        row.className = "resource-row";
+        var name = document.createElement("span");
+        name.className = "resource-name";
+        name.textContent = res.name;
+        var ver = document.createElement("span");
+        if (res.installed_version) {
+          ver.className = "resource-version";
+          ver.textContent = res.installed_version;
+        } else {
+          ver.className = "resource-version not-installed";
+          ver.textContent = "not installed";
+        }
+        row.appendChild(name);
+        row.appendChild(ver);
+        resList.appendChild(row);
+      }
 
       // Load serial ports
       invoke("cmd_list_ports", { all: true }).then(function(ports) {
@@ -444,9 +505,9 @@
       changed("filterExamples", this.checked);
     };
 
-    // Development channel
-    document.getElementById("set-dev-channel").onchange = function() {
-      changed("resourceChannel", this.checked ? "development" : "stable");
+    // Channel
+    document.getElementById("set-channel").onchange = function() {
+      changed("resourceChannel", this.value);
     };
 
     // Font size

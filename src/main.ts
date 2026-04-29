@@ -72,6 +72,7 @@ import { openPinoutViewer } from "./pinout";
 import { openResourceWindow, type ResourceStatus } from "./resources";
 import { message as dialogMessage } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 
 // --- Context menu ---
 
@@ -1222,9 +1223,9 @@ function hideUpdateIndicator() {
 }
 
 document.getElementById("status-updates")?.addEventListener("click", async () => {
-  hideUpdateIndicator();
   const downloaded = await openResourceWindow("update", state.resourceChannel);
   if (downloaded) {
+    hideUpdateIndicator();
     await relaunch();
   }
 });
@@ -1331,6 +1332,52 @@ listen("request-close", async () => {
   await getCurrentWindow().destroy();
 });
 
+// --- About dialog ---
+
+let aboutWin: WebviewWindow | null = null;
+
+async function openAboutDialog() {
+  if (aboutWin) {
+    return;
+  }
+
+  const scale = state.uiScale;
+  const win = new WebviewWindow("about", {
+    url: "about.html",
+    title: "About OpenMV Studio",
+    width: Math.round(380 * scale),
+    height: Math.round(340 * scale),
+    resizable: false,
+    center: true,
+    alwaysOnTop: true,
+    parent: "main",
+  });
+
+  aboutWin = win;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      win.once("tauri://created", () => resolve());
+      win.once("tauri://error", (e) => reject(e));
+    });
+  } catch {
+    aboutWin = null;
+    return;
+  }
+
+  const readyUnlisten = await listen("about-ready", async () => {
+    readyUnlisten();
+    const version = await getVersion();
+    const theme = document.documentElement.getAttribute("data-theme") || "dark";
+
+    win.emit("about-init", { version, theme });
+  });
+
+  win.once("tauri://destroyed", () => {
+    aboutWin = null;
+  });
+}
+
 // --- System menu ---
 
 listen<string>("menu-action", (event) => {
@@ -1372,6 +1419,12 @@ listen<string>("menu-action", (event) => {
       break;
     case "pinout-viewer":
       openPinoutViewer();
+      break;
+    case "docs":
+      invoke("cmd_open_url", { url: "https://docs.openmv.io/" });
+      break;
+    case "about":
+      openAboutDialog();
       break;
     default:
       if (action.startsWith("recent:")) {

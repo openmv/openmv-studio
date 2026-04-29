@@ -324,9 +324,18 @@ export async function openSettings() {
   }
 
   // Wait for the settings page JS to load and register listeners
-  const readyUnlisten = await listen("settings-ready", () => {
+  const readyUnlisten = await listen("settings-ready", async () => {
     readyUnlisten();
     const edOpts = editor.getOptions();
+
+    let resources: { name: string; installed_version: string | null }[] = [];
+
+    try {
+      resources = await invoke("cmd_check_resources", {
+        channel: state.resourceChannel,
+      });
+    } catch {}
+
     win.emit("settings-init", {
     scalePercent: Math.round(state.uiScale * 100),
     theme: state.currentThemeSetting,
@@ -342,6 +351,7 @@ export async function openSettings() {
     wordWrap: edOpts.get(monaco.editor.EditorOption.wordWrap) !== 0,
     minimap: edOpts.get(monaco.editor.EditorOption.minimap).enabled,
     lineNumbers: edOpts.get(monaco.editor.EditorOption.lineNumbers) !== 0,
+    resources: resources,
     shortcuts: shortcutBindings.map((b) => ({
       id: b.id,
       label: b.label,

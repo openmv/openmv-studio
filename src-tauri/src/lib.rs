@@ -847,8 +847,6 @@ fn build_menu(
 
     let help = SubmenuBuilder::new(app, "Help")
         .text("docs", "Documentation")
-        .text("examples", "Examples")
-        .separator()
         .text("about", "About OpenMV Studio")
         .build()?;
 

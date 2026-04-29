@@ -149,8 +149,12 @@
         statusEl.className = "resource-status";
         statusEl.id = "status-" + s.name;
         if (!s.needs_update) {
-          statusEl.textContent = "Installed";
+          statusEl.textContent = s.installed_version || "Installed";
           statusEl.classList.add("done");
+        } else if (s.installed_version && s.available_version) {
+          statusEl.textContent = s.installed_version + " -> " + s.available_version;
+        } else if (s.available_version) {
+          statusEl.textContent = s.available_version;
         } else {
           statusEl.textContent = mode === "update" ? "Update available" : "Not installed";
         }
@@ -199,14 +203,16 @@
       if (p.phase === "done") {
         bar.style.width = "100%";
         bar.classList.add("done");
-        statusEl.textContent = "Installed";
-        statusEl.className = "resource-status done";
-        // Mark as no longer needing update
+        // Show the newly installed version
+        var ver = null;
         for (var i = 0; i < statuses.length; i++) {
           if (statuses[i].name === p.resource) {
+            ver = statuses[i].available_version;
             statuses[i].needs_update = false;
           }
         }
+        statusEl.textContent = ver || "Installed";
+        statusEl.className = "resource-status done";
         checkAllDone();
       } else if (p.bytes_total > 0) {
         var pct = Math.round((p.bytes_downloaded / p.bytes_total) * 100);
