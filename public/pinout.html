@@ -198,6 +198,24 @@
     .mi-matched { color: var(--accent-blue); }
     .mi-unmatched { color: var(--text-tertiary); }
 
+    .pin-label-wrap {
+      pointer-events: none;
+    }
+    .pin-label {
+      font-size: 11px;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: rgba(25, 25, 29, 0.8);
+      white-space: nowrap;
+      pointer-events: none;
+      margin-bottom: 20px;
+    }
+    [data-theme="light"] .pin-label {
+      background: rgba(255, 255, 255, 0.85);
+    }
+
     #search-box {
       padding: 12px; border-bottom: 1px solid var(--border-subtle);
     }
@@ -278,6 +296,7 @@
     import { TrackballControls } from "three/addons/controls/TrackballControls.js";
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+    import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 
     var listen = window.__TAURI__.event.listen;
     var emit = window.__TAURI__.event.emit;
@@ -315,6 +334,137 @@
     var boardOrientation = defaultOrientation;
     var modelCenter = new THREE.Vector3();
     var modelDist = 100;
+
+    // --- Function colors ---
+    var functionColors = {
+      SPI:      0xf5a623,
+      I2C:      0xaf52de,
+      UART:     0x4cd964,
+      USART:    0x9b59b6,
+      TIM:      0xffcc00,
+      CAN:      0xff3b30,
+      FDCAN:    0xe74c3c,
+      ADC:      0x5ac8fa,
+      DAC:      0x48d1cc,
+      SAI:      0xe07baf,
+      I2S:      0xd98cb3,
+      SDMMC:    0xc0a050,
+      USB:      0x2ecc71,
+      DCMI:     0x1abc9c,
+      LPTIM:    0xe6c44d,
+      LPUART:   0xb07cd8,
+      COMP:     0x7fb3d8,
+      OPAMP:    0x6fa8c7,
+      Ethernet: 0x30b0c7,
+      Power:    0xff6961,
+      Ground:   0x8e8e93,
+      Reset:    0xff6961,
+      Boot:     0xffcc00,
+      Wakeup:   0xaf52de,
+      GPIO:     0x5b9cf5
+    };
+
+    function getFunctionColor(pin) {
+      if (!pin || !pin.functions) {
+        return functionColors.GPIO;
+      }
+      for (var i = 0; i < pin.functions.length; i++) {
+        if (pin.functions[i] === "GPIO") {
+          continue;
+        }
+        var cat = categorizeFunction(pin.functions[i]);
+        if (cat) {
+          return functionColors[cat];
+        }
+      }
+      return functionColors.GPIO;
+    }
+
+    function categorizeFunction(f) {
+      if (f.indexOf("LPTIM") === 0) { return "LPTIM"; }
+      if (f.indexOf("LPUART") === 0) { return "LPUART"; }
+      if (f.indexOf("FDCAN") === 0) { return "FDCAN"; }
+      if (f.indexOf("SDMMC") === 0 || f.indexOf("SDIO") === 0) { return "SDMMC"; }
+      if (f.indexOf("SPI") === 0) { return "SPI"; }
+      if (f.indexOf("I2S") === 0) { return "I2S"; }
+      if (f.indexOf("I2C") === 0) { return "I2C"; }
+      if (f.indexOf("USART") === 0) { return "USART"; }
+      if (f.indexOf("UART") === 0) { return "UART"; }
+      if (f.indexOf("TIM") === 0) { return "TIM"; }
+      if (f.indexOf("CAN") === 0) { return "CAN"; }
+      if (f.indexOf("ADC") === 0) { return "ADC"; }
+      if (f.indexOf("DAC") === 0) { return "DAC"; }
+      if (f.indexOf("SAI") === 0) { return "SAI"; }
+      if (f.indexOf("DCMI") === 0 || f.indexOf("PSSI") === 0) { return "DCMI"; }
+      if (f.indexOf("USB") === 0 || f.indexOf("OTG") === 0) { return "USB"; }
+      if (f.indexOf("COMP") === 0) { return "COMP"; }
+      if (f.indexOf("OPAMP") === 0) { return "OPAMP"; }
+      if (f.indexOf("Ethernet") !== -1) { return "Ethernet"; }
+      if (f.indexOf("Power") !== -1) { return "Power"; }
+      if (f === "Ground") { return "Ground"; }
+      if (f.indexOf("Reset") !== -1) { return "Reset"; }
+      if (f.indexOf("Boot") !== -1) { return "Boot"; }
+      if (f.indexOf("Wakeup") !== -1) { return "Wakeup"; }
+      return null;
+    }
+
+    function getSearchColor(query, matches) {
+      var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      var re = new RegExp("\\b" + escaped, "i");
+      var found = {};
+      var count = 0;
+      // Check functions that directly match the query text
+      matches.forEach(function(m) {
+        (m.pin.functions || []).forEach(function(f) {
+          if (f === "GPIO" || !re.test(f)) {
+            return;
+          }
+          var cat = categorizeFunction(f);
+          if (cat && !found[cat]) {
+            found[cat] = true;
+            count++;
+          }
+        });
+      });
+      if (count === 1) {
+        for (var k in found) {
+          return functionColors[k];
+        }
+      }
+      // No function text matched - check if all matched pins share
+      // a single non-GPIO category (e.g. searching "3v3" or "gnd")
+      if (count === 0) {
+        matches.forEach(function(m) {
+          (m.pin.functions || []).forEach(function(f) {
+            if (f === "GPIO") {
+              return;
+            }
+            var cat = categorizeFunction(f);
+            if (cat && !found[cat]) {
+              found[cat] = true;
+              count++;
+            }
+          });
+        });
+        if (count === 1) {
+          for (var k in found) {
+            return functionColors[k];
+          }
+        }
+      }
+      return functionColors.GPIO;
+    }
+
+    function getPinColor(pin) {
+      if (!pin || !pin.functions) {
+        return functionColors.GPIO;
+      }
+      var nonGpio = pin.functions.filter(function(f) { return f !== "GPIO"; });
+      if (nonGpio.length === 1) {
+        return getFunctionColor(pin);
+      }
+      return functionColors.GPIO;
+    }
 
     // --- Theme colors ---
     var themeBg = { dark: 0x1e1e23, light: 0xf5f5f7 };
@@ -365,30 +515,61 @@
     var raycaster = new THREE.Raycaster();
     var mouse = new THREE.Vector2();
 
+    // --- CSS2D label renderer ---
+    var labelRenderer = new CSS2DRenderer();
+    labelRenderer.domElement.style.position = "absolute";
+    labelRenderer.domElement.style.top = "0";
+    labelRenderer.domElement.style.left = "0";
+    labelRenderer.domElement.style.pointerEvents = "none";
+    document.getElementById("viewport").appendChild(labelRenderer.domElement);
+
     // --- Pin selection marker (floating diamond) ---
     var diamondShape = new THREE.OctahedronGeometry(1, 0);
     diamondShape.scale(1, 1, 1.8);
 
-    var markerMaterial = new THREE.MeshBasicMaterial({
-      color: 0x5b9cf5,
-      transparent: true,
-      opacity: 0.85,
-      side: THREE.DoubleSide,
-      depthTest: false
-    });
     var markerPool = [];
+    var labelPool = [];
     var activeMarkers = [];
 
     function getMarker(index) {
       if (index < markerPool.length) {
         return markerPool[index];
       }
-      var m = new THREE.Mesh(diamondShape, markerMaterial);
+      var mat = new THREE.MeshStandardMaterial({
+        color: 0x5b9cf5,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        metalness: 0.2,
+        roughness: 0.25,
+        emissive: 0x5b9cf5,
+        emissiveIntensity: 0.3
+      });
+      var m = new THREE.Mesh(diamondShape, mat);
       m.visible = false;
       m.renderOrder = 999;
       scene.add(m);
       markerPool.push(m);
       return m;
+    }
+
+    function getLabel(index) {
+      if (index < labelPool.length) {
+        return labelPool[index];
+      }
+      var wrap = document.createElement("div");
+      wrap.className = "pin-label-wrap";
+      var inner = document.createElement("div");
+      inner.className = "pin-label";
+      wrap.appendChild(inner);
+      var label = new CSS2DObject(wrap);
+      label.center.set(0.5, 1);
+      label.visible = false;
+      label.innerEl = inner;
+      scene.add(label);
+      labelPool.push(label);
+      return label;
     }
 
     // --- Resize ---
@@ -397,6 +578,7 @@
       var w = vp.clientWidth;
       var h = vp.clientHeight;
       renderer.setSize(w, h);
+      labelRenderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       controls.handleResize();
@@ -412,9 +594,11 @@
         activeMarkers.forEach(function(am) {
           am.mesh.position.z = am.baseZ + Math.sin(t) * am.bobAmp;
           am.mesh.rotation.z = t * 0.5;
+          am.label.position.copy(am.mesh.position);
         });
       }
       renderer.render(scene, camera);
+      labelRenderer.render(scene, camera);
     }
     animate();
 
@@ -555,14 +739,22 @@
     }
 
     // --- Pin interaction ---
-    function setHighlight(mesh, highlight) {
+    function setHighlight(mesh, highlight, colorOverride) {
       if (!mesh || !mesh.material) {
         return;
       }
       if (highlight) {
-        mesh.material.color.setHex(highlight === "select" ? 0x3b8af5 : 0x5b9cf5);
+        var color;
+        if (colorOverride !== undefined) {
+          color = colorOverride;
+        } else {
+          var pinKey = mesh.userData.pinName;
+          var pin = pinoutData[pinKey];
+          color = getPinColor(pin);
+        }
+        mesh.material.color.setHex(color);
         if (mesh.material.emissive) {
-          mesh.material.emissive.setHex(highlight === "select" ? 0x3b8af5 : 0x5b9cf5);
+          mesh.material.emissive.setHex(color);
           mesh.material.emissiveIntensity = highlight === "select" ? 1.0 : 0.6;
         }
       } else {
@@ -575,17 +767,25 @@
 
     function hideMarkers() {
       markerPool.forEach(function(m) { m.visible = false; });
+      labelPool.forEach(function(l) { l.visible = false; });
       activeMarkers = [];
     }
 
-    function showMarkers(meshes) {
+    function showMarkers(meshes, colorOverride, labelTexts) {
       hideMarkers();
       if (!meshes) {
         return;
       }
       var list = Array.isArray(meshes) ? meshes : [meshes];
       list.forEach(function(mesh, i) {
+        var pinKey = mesh.userData.pinName;
+        var pin = pinoutData[pinKey];
+        var color = colorOverride !== undefined ? colorOverride : getPinColor(pin);
+
         var marker = getMarker(i);
+        marker.material.color.setHex(color);
+        marker.material.emissive.setHex(color);
+
         var bbox = new THREE.Box3().setFromObject(mesh);
         var center = bbox.getCenter(new THREE.Vector3());
         var size = bbox.getSize(new THREE.Vector3());
@@ -595,8 +795,18 @@
         marker.scale.set(scale, scale, scale);
         marker.position.set(center.x, center.y, bbox.max.z + pinWidth * 3.0);
         marker.visible = true;
+
+        var label = getLabel(i);
+        var colorHex = "#" + color.toString(16).padStart(6, "0");
+        var text = labelTexts ? labelTexts[i] : (pin ? pin.name : pinKey);
+        label.innerEl.textContent = text;
+        label.innerEl.style.color = colorHex;
+        label.position.copy(marker.position);
+        label.visible = true;
+
         activeMarkers.push({
           mesh: marker,
+          label: label,
           baseZ: marker.position.z,
           bobAmp: pinWidth * 0.15
         });
@@ -996,32 +1206,45 @@
         return;
       }
 
+      var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      var re = new RegExp("\\b" + escaped, "i");
+
       var matches = [];
       for (var key in pinoutData) {
         var pin = pinoutData[key];
         var searchable = [
           pin.name, pin.gpio, pin.voltage, pin.description
-        ].concat(pin.functions || []).filter(Boolean).join(" ").toLowerCase();
+        ].concat(pin.functions || []).filter(Boolean).join(" ");
 
-        if (searchable.indexOf(query) !== -1) {
-          matches.push({ key: key, pin: pin });
+        if (re.test(searchable)) {
+          // Find the first function that matched the query
+          var matchedFunc = null;
+          (pin.functions || []).forEach(function(f) {
+            if (!matchedFunc && f !== "GPIO" && re.test(f)) {
+              matchedFunc = f;
+            }
+          });
+          matches.push({ key: key, pin: pin, matchedFunc: matchedFunc });
         }
       }
 
       // Highlight matching meshes and show markers
+      var searchColor = getSearchColor(query, matches);
       var matchedMeshes = [];
+      var matchedLabels = [];
       matches.forEach(function(m) {
         var mesh = pinMeshes.find(function(pm) {
           return (pm.userData.pinName || pm.name) === m.key;
         });
         if (mesh) {
           if (mesh !== selectedPin) {
-            setHighlight(mesh, "hover");
+            setHighlight(mesh, "hover", searchColor);
           }
           matchedMeshes.push(mesh);
+          matchedLabels.push(m.matchedFunc || m.pin.name);
         }
       });
-      showMarkers(matchedMeshes);
+      showMarkers(matchedMeshes, searchColor, matchedLabels);
 
       // Show results list
       matches.forEach(function(m) {
@@ -1029,7 +1252,7 @@
         div.className = "search-result";
 
         var matchedFuncs = (m.pin.functions || []).filter(function(f) {
-          return f.toLowerCase().indexOf(query) !== -1;
+          return re.test(f);
         });
         var funcStr = matchedFuncs.length > 0 ? matchedFuncs.join(", ") : "";
         div.innerHTML = '<div style="display:flex;justify-content:space-between;width:100%">' +
