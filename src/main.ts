@@ -1193,6 +1193,12 @@ setShortcutBindings([
     defaults: [{ meta: true, shift: true, key: "ArrowRight" }],
     action: moveTabRight,
   },
+  {
+    id: "pinout-viewer",
+    label: "Pinout Viewer",
+    defaults: [{ meta: true, key: "p" }],
+    action: openPinoutViewer,
+  },
 ] as ShortcutBinding[]);
 
 initShortcuts(editor);
