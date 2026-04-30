@@ -25,7 +25,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/resources/**"]
+        "scope": ["$APPDATA/resources/**", "$APPDATA/training/**"]
       }
     }
   },
@@ -38,7 +38,7 @@
       "icons/icon.ico"
     ],
     "category": "Development",
-    "resources": {},
+    "resources": ["scripts/"],
     "linux": {
       "deb": {
         "depends": [

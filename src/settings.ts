@@ -71,9 +71,21 @@ export function initSettings(
     ?.addEventListener("click", () => openSettings());
 }
 
+const CHILD_WINDOW_LABELS = [
+  "training", "pinout", "settings", "resources", "about", "dfu-progress",
+];
+
 export function setUiScale(scale: number) {
   state.uiScale = Math.max(0.5, Math.min(2.0, scale));
   getCurrentWebviewWindow().setZoom(state.uiScale);
+  // Apply zoom to all open child windows
+  for (const label of CHILD_WINDOW_LABELS) {
+    WebviewWindow.getByLabel(label).then((win) => {
+      if (win) {
+        win.setZoom(state.uiScale);
+      }
+    }).catch(() => {});
+  }
 }
 
 // --- Save / Load ---
@@ -302,8 +314,8 @@ export async function openSettings() {
   const win = new WebviewWindow("settings", {
     url: "settings.html",
     title: "Settings",
-    width: Math.round(520 * scale),
-    height: Math.round(560 * scale),
+    width: Math.round(600 * scale),
+    height: Math.round(480 * scale),
     resizable: true,
     center: true,
     alwaysOnTop: true,
@@ -322,6 +334,8 @@ export async function openSettings() {
     settingsWin = null;
     return;
   }
+
+  win.setZoom(scale);
 
   // Wait for the settings page JS to load and register listeners
   const readyUnlisten = await listen("settings-ready", async () => {

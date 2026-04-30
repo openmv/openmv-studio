@@ -41,6 +41,8 @@ export async function openPinoutViewer() {
     return;
   }
 
+  win.setZoom(scale);
+
   const readyUnlisten = await listen("pinout-ready", async () => {
     readyUnlisten();
     let boardsPath = "";

@@ -1,0 +1,1983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="/libs/uplot/uPlot.min.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1e1e23; color: #ccc;
+      display: flex; flex-direction: column;
+      height: 100vh; overflow: hidden;
+      user-select: none;
+    }
+
+    /* -- Toolbar -- */
+    .toolbar {
+      background: #161619; border-bottom: 1px solid #2a2a2f;
+      flex-shrink: 0;
+    }
+    .toolbar-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+    .toolbar-row + .toolbar-row {
+      border-top: 1px solid #222226;
+    }
+    .toolbar-row select {
+      padding: 3px 8px; font-size: 11px;
+      background: #2a2a2f; color: #ccc;
+      border: 1px solid #3a3a3f; border-radius: 4px;
+      height: 24px;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .toolbar-row #project-select { flex: 1; min-width: 120px; }
+    .toolbar-row #train-epochs { flex: 1; width: auto; min-width: 80px; }
+    .toolbar-row button {
+      padding: 3px 10px; border-radius: 4px;
+      border: 1px solid #3a3a3f; background: #2a2a2f;
+      color: #ccc; font-size: 11px; cursor: pointer;
+      white-space: nowrap; height: 24px;
+    }
+    .toolbar-row button:hover { background: #333; }
+    .toolbar-row .btn-danger { color: #f07070; }
+    .toolbar-row .btn-danger:hover { background: #3a2020; }
+    .toolbar-row .btn-accent { color: #6ab0ff; }
+    .toolbar-row .btn-accent:hover { background: #1a2a3f; }
+    .toolbar-row .btn-annotate-active { background: #2e7d32; border-color: #388e3c; color: #fff; }
+    .toolbar-row .btn-stop-train { background: #c62828; border-color: #d32f2f; color: #fff; }
+    .toolbar-row .btn-stop-train:hover { background: #d32f2f; }
+    .toolbar-row input[type="range"] {
+      width: 60px; accent-color: #4a9eff; height: 24px;
+    }
+    .toolbar-row .separator {
+      width: 1px; height: 18px; background: #3a3a3f;
+      flex-shrink: 0;
+    }
+    .toolbar-row label { color: #888; line-height: 24px; }
+    .toolbar-row .spacer { width: 0; flex-shrink: 0; }
+    .toolbar-row .epochs-val { color: #aaa; min-width: 22px; text-align: right; font-size: 11px; }
+
+    /* -- Main layout -- */
+    .main { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* -- Editor (center) -- */
+    .editor-area {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      position: relative; overflow: hidden;
+      background: #111114;
+      user-select: none; -webkit-user-select: none;
+    }
+    .editor-container {
+      position: relative;
+      display: inline-block;
+    }
+    .editor-container img {
+      max-width: 100%; max-height: calc(100vh - 260px);
+      display: block;
+      -webkit-user-drag: none; user-select: none; -webkit-user-select: none;
+      pointer-events: none;
+    }
+    .editor-container canvas {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%;
+      cursor: crosshair;
+      user-select: none; -webkit-user-select: none;
+    }
+    .no-selection {
+      color: #555; font-size: 14px;
+      text-align: center; line-height: 1.6;
+    }
+
+    /* -- Thumbnail strip (horizontal, bottom of editor) -- */
+    .thumb-strip {
+      height: 90px; min-height: 90px;
+      overflow-x: auto; overflow-y: hidden;
+      background: #161619;
+      border-top: 1px solid #2a2a2f;
+      padding: 4px;
+      display: flex; gap: 4px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .thumb-item {
+      position: relative; cursor: pointer;
+      border-radius: 4px;
+      border: 2px solid #2a2a2f;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .thumb-item.status-accepted { border-color: #4caf50; }
+    .thumb-item.status-rejected { border-color: #f44336; }
+    .thumb-item.status-rejected img { opacity: 0.45; filter: grayscale(0.6); }
+    .thumb-item.selected { border-color: #4a9eff; box-shadow: 0 0 0 2px #4a9eff44; }
+    .thumb-item.multi-selected { border-color: #ff9800; }
+    .thumb-item img {
+      height: 76px; width: auto; display: block;
+      border-radius: 2px;
+    }
+    .thumb-badge {
+      position: absolute; top: 3px; right: 3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      color: #fff; font-size: 11px; font-weight: bold;
+      line-height: 16px; text-align: center;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+    }
+    .thumb-badge.pending { background: #555; width: 8px; height: 8px; }
+    .thumb-badge.accepted { background: #4caf50; }
+    .thumb-badge.accepted::before { content: "\2713"; }
+    .thumb-badge.rejected { background: #f44336; }
+    .thumb-badge.rejected::before { content: "\00d7"; font-size: 14px; }
+    .thumb-delete {
+      position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 3px;
+      background: rgba(0,0,0,0.6); border: none;
+      color: #f44336; font-size: 12px; line-height: 16px;
+      text-align: center; cursor: pointer;
+      display: none; padding: 0;
+    }
+    .thumb-item:hover .thumb-delete { display: block; }
+    .thumb-delete:hover { background: #c62828; color: #fff; }
+
+    /* -- Drop overlay -- */
+    .drop-overlay {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(74, 158, 255, 0.10);
+      border: 3px dashed #4a9eff;
+      z-index: 50;
+      align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .drop-overlay.visible { display: flex; }
+    .drop-overlay .drop-label {
+      background: rgba(0,0,0,0.7); color: #4a9eff;
+      padding: 16px 32px; border-radius: 8px;
+      font-size: 16px; font-weight: 600;
+    }
+
+    /* -- Controls bar (bottom) -- */
+    .controls-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 12px;
+      background: #161619; border-top: 1px solid #2a2a2f;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .controls-bar label { color: #888; }
+    .controls-bar select {
+      padding: 3px 8px; font-size: 11px;
+      background: #2a2a2f; color: #ccc;
+      border: 1px solid #3a3a3f; border-radius: 4px;
+      height: 24px;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .controls-bar #class-select { flex: 1; min-width: 100px; }
+    .controls-bar button {
+      padding: 4px 12px; border-radius: 4px;
+      border: 1px solid #3a3a3f; background: #2a2a2f;
+      color: #ccc; font-size: 11px; cursor: pointer;
+      white-space: nowrap; height: 26px;
+    }
+    .controls-bar button:hover { background: #333; }
+    .controls-bar .btn-danger { background: #6b1c1c; border-color: #8b2c2c; }
+    .controls-bar .btn-danger:hover { background: #8b2c2c; }
+    .controls-bar .btn-accept { background: #2e7d32; border-color: #388e3c; }
+    .controls-bar .btn-accept:hover { background: #388e3c; }
+    .controls-bar .btn-reject { background: #c62828; border-color: #d32f2f; }
+    .controls-bar .btn-reject:hover { background: #d32f2f; }
+    .controls-bar .spacer { flex: 1; }
+    .controls-bar .box-info { color: #666; font-size: 10px; }
+    .controls-bar .btn-annotate-active { background: #2e7d32; border-color: #388e3c; color: #fff; }
+
+    /* -- Status bar (bottom) -- */
+    .status-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 12px;
+      background: #1a1a1e; border-top: 1px solid #2a2a2f;
+      font-size: 11px;
+      flex-shrink: 0;
+      min-height: 24px;
+    }
+    .status-bar .status-text { color: #aaa; flex-shrink: 0; }
+    .status-bar .spacer { flex: 1; }
+    .status-bar .stats { color: #777; font-size: 10px; flex-shrink: 0; margin-left: auto; }
+    .status-bar .progress-fill {
+      height: 4px; background: #4a9eff; border-radius: 2px;
+      transition: width 0.3s;
+    }
+    .status-bar .progress-track {
+      flex: 1; min-width: 80px; height: 4px;
+      background: #2a2a2f; border-radius: 2px;
+      overflow: hidden;
+    }
+
+    /* -- Modal overlay -- */
+    .modal-overlay {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.visible {
+      display: flex;
+    }
+    .modal {
+      background: #25252b; border: 1px solid #3a3a3f;
+      border-radius: 8px; padding: 20px;
+      width: 360px; max-width: 90vw;
+    }
+    .modal h3 {
+      font-size: 14px; font-weight: 600;
+      color: #e0e0e0; margin-bottom: 14px;
+    }
+    .modal label {
+      display: block; font-size: 11px; color: #999;
+      margin-bottom: 4px;
+    }
+    .modal input[type="text"] {
+      width: 100%; padding: 6px 8px; font-size: 12px;
+      background: #1e1e23; color: #ccc;
+      border: 1px solid #3a3a3f; border-radius: 4px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    .modal input[type="text"]:focus {
+      border-color: #4a9eff;
+    }
+    .modal .hint {
+      font-size: 10px; color: #777; margin-top: -8px; margin-bottom: 12px;
+    }
+    .modal .modal-btns {
+      display: flex; justify-content: flex-end; gap: 8px;
+      margin-top: 16px;
+    }
+    .modal .modal-btns button {
+      padding: 5px 16px; border-radius: 4px;
+      border: 1px solid #3a3a3f; background: #2a2a2f;
+      color: #ccc; font-size: 12px; cursor: pointer;
+    }
+    .modal .modal-btns button:hover { background: #333; }
+    .modal .modal-btns .btn-primary {
+      background: #1565c0; border-color: #1976d2;
+    }
+    .modal .modal-btns .btn-primary:hover { background: #1976d2; }
+
+    /* Disabled state */
+    button:disabled, button[disabled] {
+      opacity: 0.4; cursor: default;
+      pointer-events: none;
+    }
+
+    /* -- Metrics pane (replaces editor while training) -- */
+    .metrics-pane {
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: stretch; justify-content: flex-start;
+      padding: 12px 16px; gap: 10px;
+    }
+    .metrics-summary {
+      color: #ccc; font-size: 12px; font-variant-numeric: tabular-nums;
+      display: flex; gap: 18px; flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    .metrics-summary .key { color: #888; }
+    .metrics-summary .val { color: #e0e0e0; }
+    .metrics-chart {
+      flex: 1; min-height: 0; min-width: 0;
+      position: relative; overflow: hidden;
+    }
+    .metrics-legend {
+      margin-left: auto;
+      display: flex; gap: 12px;
+      font-size: 12px; color: #ccc;
+    }
+    .metrics-legend .item {
+      display: flex; align-items: center; gap: 5px;
+    }
+    .metrics-legend .swatch {
+      width: 10px; height: 10px; border-radius: 2px; display: inline-block;
+    }
+    /* uPlot dark theme tweaks */
+    .uplot { color: #aaa; }
+    .u-title { color: #ccc; }
+  </style>
+  <script src="/libs/uplot/uPlot.iife.min.js"></script>
+</head>
+<body>
+  <!-- Toolbar: project + training -->
+  <div class="toolbar">
+    <div class="toolbar-row">
+      <select id="project-select">
+        <option value="">-- select project --</option>
+        <option value="__new__">-- new project --</option>
+      </select>
+      <button id="btn-delete-project" class="btn-danger" disabled>Delete</button>
+      <span class="spacer"></span>
+      <span class="separator"></span>
+      <label>Model:</label>
+      <select id="train-model">
+        <option value="yolov8n" selected>YOLOv8n</option>
+        <option value="yolo11n">YOLO11n</option>
+      </select>
+      <span class="spacer"></span>
+      <label>Epochs:</label>
+      <input type="range" id="train-epochs" min="5" max="200" step="5" value="50">
+      <span class="epochs-val" id="epochs-val">50</span>
+      <span class="spacer"></span>
+      <label>Size:</label>
+      <select id="train-imgsz">
+        <option value="96">96</option>
+        <option value="128">128</option>
+        <option value="192" selected>192</option>
+        <option value="256">256</option>
+        <option value="320">320</option>
+      </select>
+      <span class="spacer"></span>
+      <button class="btn-accent" id="btn-train" disabled>Train</button>
+      <button class="btn-stop-train" id="btn-stop-train" style="display:none">Stop</button>
+      <button class="btn-accent" id="btn-export" disabled>Export</button>
+    </div>
+  </div>
+
+  <!-- Main area: editor + horizontal thumbnail strip -->
+  <div class="main">
+    <div class="editor-area" id="editor-area">
+      <span class="no-selection" id="no-selection">Select or create a project to begin</span>
+      <div class="editor-container" id="editor-container" style="display:none">
+        <img id="editor-img">
+        <canvas id="editor-canvas"></canvas>
+      </div>
+      <div class="metrics-pane" id="metrics-pane" style="display:none">
+        <div class="metrics-summary" id="metrics-summary">
+          <span><span class="key">epoch</span> <span class="val" id="m-epoch">-</span></span>
+          <span><span class="key">box_loss</span> <span class="val" id="m-box">-</span></span>
+          <span><span class="key">cls_loss</span> <span class="val" id="m-cls">-</span></span>
+          <span><span class="key">mAP50</span> <span class="val" id="m-map">-</span></span>
+          <span class="metrics-legend">
+            <span class="item"><span class="swatch" style="background:#4a9eff"></span>box_loss</span>
+            <span class="item"><span class="swatch" style="background:#ff9800"></span>cls_loss</span>
+            <span class="item"><span class="swatch" style="background:#4caf50"></span>mAP50</span>
+          </span>
+        </div>
+        <div class="metrics-chart" id="metrics-chart"></div>
+      </div>
+    </div>
+    <div class="thumb-strip" id="thumb-strip"></div>
+  </div>
+
+  <!-- Controls bar: annotation editing -->
+  <div class="controls-bar">
+    <label>Class:</label>
+    <select id="class-select"></select>
+    <span class="box-info" id="box-info"></span>
+    <span class="spacer"></span>
+    <button id="btn-annotate" disabled>Auto-Annotate</button>
+    <span class="separator" style="width:1px;height:18px;background:#3a3a3f"></span>
+    <button id="btn-import" disabled>Add Images</button>
+    <button class="btn-danger" id="btn-delete-images" disabled>Delete Image</button>
+    <span class="separator" style="width:1px;height:18px;background:#3a3a3f"></span>
+    <button class="btn-reject" id="btn-reject" disabled>Reject</button>
+    <button class="btn-accept" id="btn-accept" disabled>Accept</button>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar" id="status-bar">
+    <span class="status-text" id="status-text"></span>
+    <div class="progress-track" id="train-progress-track" style="display:none">
+      <div class="progress-fill" id="train-progress-fill" style="width:0%"></div>
+    </div>
+    <span class="stats" id="stats-bar"></span>
+    <span class="status-info" id="class-list"></span>
+  </div>
+
+  <!-- Drop overlay -->
+  <div class="drop-overlay" id="drop-overlay">
+    <div class="drop-label">Drop images to import</div>
+  </div>
+
+  <!-- New Project modal -->
+  <div class="modal-overlay" id="modal-new-project">
+    <div class="modal">
+      <h3>New Project</h3>
+      <label for="input-project-name">Project name</label>
+      <input type="text" id="input-project-name" placeholder="e.g. my-detector">
+      <label for="input-classes">Class names (comma-separated)</label>
+      <input type="text" id="input-classes" placeholder="e.g. cat, dog, bird">
+      <div class="hint">These are the object classes to detect.</div>
+      <div class="modal-btns">
+        <button id="btn-modal-cancel">Cancel</button>
+        <button class="btn-primary" id="btn-modal-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var listen = window.__TAURI__.event.listen;
+    var invoke = window.__TAURI__.core.invoke;
+    var convertFileSrc = window.__TAURI__.core.convertFileSrc;
+    var dialogOpen = window.__TAURI__.dialog.open;
+    var dialogSave = window.__TAURI__.dialog.save;
+    var getCurrentWebview = window.__TAURI__.webview.getCurrentWebview;
+    var getCurrentWindow = window.__TAURI__.window.getCurrentWindow;
+
+    // -- State --
+    var currentProject = "";
+    var currentProjectModel = "";
+    var imagePath = "";
+    var classes = [];
+    var annotations = [];
+    var selectedIndex = -1;
+    var boxes = [];
+    var selectedBox = -1;
+    var selectedSet = {};  // {index: true} for multi-select
+    var drawing = false;
+    var drawStart = null;
+    var dragMode = null;  // null | "move" | "resize-tl" | "resize-tr" | "resize-bl" | "resize-br" | "resize-t" | "resize-b" | "resize-l" | "resize-r"
+    var dragOrigin = null;  // {mx, my, cx, cy, w, h} snapshot at mousedown
+    var annotating = false;
+    var training = false;
+
+    // -- DOM refs --
+    var projectSelect = document.getElementById("project-select");
+    var thumbStrip = document.getElementById("thumb-strip");
+    var editorContainer = document.getElementById("editor-container");
+    var editorImg = document.getElementById("editor-img");
+    var editorCanvas = document.getElementById("editor-canvas");
+    var noSelection = document.getElementById("no-selection");
+    var classSelect = document.getElementById("class-select");
+    var boxInfo = document.getElementById("box-info");
+    var dropOverlay = document.getElementById("drop-overlay");
+    var ctx = editorCanvas.getContext("2d");
+
+    // ========================================================================
+    // ESC to close window
+    // ========================================================================
+
+    // Kill any running python subprocess (training, annotator) when the
+    // training window closes - otherwise they keep running detached.
+    getCurrentWindow().onCloseRequested(function() {
+      try { invoke("cmd_ml_stop_training"); } catch (e) {}
+      try { invoke("cmd_ml_stop_annotator"); } catch (e) {}
+    });
+
+    document.addEventListener("keydown", function(e) {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+        if (e.key === "Escape") {
+          e.target.blur();
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        // Close modal first if open
+        var modal = document.getElementById("modal-new-project");
+        if (modal.classList.contains("visible")) {
+          modal.classList.remove("visible");
+          return;
+        }
+        // Clear multi-selection if active
+        if (Object.keys(selectedSet).length > 0) {
+          selectedSet = {};
+          renderThumbnails();
+          updateNavButtons();
+          return;
+        }
+        getCurrentWindow().close();
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+        if (annotations.length > 0) {
+          e.preventDefault();
+          // Toggle: if all images are already in the set, clear it; otherwise select all
+          var allSelected = Object.keys(selectedSet).length === annotations.length;
+          selectedSet = {};
+          if (!allSelected) {
+            for (var i = 0; i < annotations.length; i++) {
+              selectedSet[i] = true;
+            }
+          }
+          renderThumbnails();
+          updateNavButtons();
+        }
+        return;
+      }
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        // If multi-selection is active, delete those images instead of a box
+        if (Object.keys(selectedSet).length > 0) {
+          e.preventDefault();
+          document.getElementById("btn-delete-images").click();
+          return;
+        }
+        deleteSelectedBox();
+      }
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        if (selectedIndex < annotations.length - 1) {
+          selectImage(selectedIndex + 1);
+        }
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (selectedIndex > 0) {
+          selectImage(selectedIndex - 1);
+        }
+      }
+      if (e.key === "a" || e.key === "A") {
+        setReviewStatus("accepted");
+      }
+      if (e.key === "r" || e.key === "R") {
+        setReviewStatus("rejected");
+      }
+    });
+
+    // ========================================================================
+    // Drag and drop
+    // ========================================================================
+
+    getCurrentWebview().onDragDropEvent(function(event) {
+      if (event.payload.type === "enter") {
+        if (currentProject) {
+          dropOverlay.classList.add("visible");
+        }
+      } else if (event.payload.type === "leave") {
+        dropOverlay.classList.remove("visible");
+      } else if (event.payload.type === "drop") {
+        dropOverlay.classList.remove("visible");
+        if (!currentProject) {
+          return;
+        }
+        var paths = event.payload.paths;
+        if (!paths || paths.length === 0) {
+          return;
+        }
+        importPaths(paths);
+      }
+    });
+
+    function importPaths(paths) {
+      invoke("cmd_ml_import_images", {
+        project: currentProject,
+        paths: paths,
+      }).then(function(count) {
+        document.getElementById("status-text").textContent =
+          count + " images imported";
+        return loadAnnotations();
+      }).catch(function(e) {
+        console.error("Failed to import images:", e);
+      });
+    }
+
+    // ========================================================================
+    // Project management
+    // ========================================================================
+
+    function loadProjects() {
+      invoke("cmd_ml_list_projects").then(function(projects) {
+        projectSelect.innerHTML = '<option value="">-- select project --</option>';
+        for (var i = 0; i < projects.length; i++) {
+          var p = projects[i];
+          var opt = document.createElement("option");
+          opt.value = p.name;
+          opt.textContent = p.name +
+            " (" + p.image_count + " imgs, " + p.reviewed_count + " reviewed)";
+          projectSelect.appendChild(opt);
+        }
+        var newOpt = document.createElement("option");
+        newOpt.value = "__new__";
+        newOpt.textContent = "-- new project --";
+        projectSelect.appendChild(newOpt);
+        if (currentProject) {
+          projectSelect.value = currentProject;
+          if (!projectSelect.value) {
+            currentProject = "";
+            clearProjectUI();
+          }
+        }
+      }).catch(function(e) {
+        console.error("Failed to load projects:", e);
+      });
+    }
+
+    projectSelect.addEventListener("change", function() {
+      var name = projectSelect.value;
+      if (name === "__new__") {
+        // Revert to whatever was selected before; modal handles the actual create
+        projectSelect.value = currentProject || "";
+        openNewProjectModal();
+        return;
+      }
+      if (name) {
+        selectProject(name);
+      } else {
+        currentProject = "";
+        clearProjectUI();
+      }
+    });
+
+    function selectProject(name) {
+      currentProject = name;
+      invoke("cmd_ml_project_image_path", { project: name }).then(function(path) {
+        imagePath = path;
+        return invoke("cmd_ml_list_projects");
+      }).then(function(projects) {
+        var proj = null;
+        for (var i = 0; i < projects.length; i++) {
+          if (projects[i].name === name) {
+            proj = projects[i];
+            break;
+          }
+        }
+        if (!proj) {
+          return;
+        }
+        classes = proj.classes || [];
+        currentProjectModel = proj.model || "";
+        updateClassSelect();
+        // Restore the model dropdown to whatever was last trained
+        if (proj.model) {
+          var modelSel = document.getElementById("train-model");
+          for (var k = 0; k < modelSel.options.length; k++) {
+            if (modelSel.options[k].value === proj.model) {
+              modelSel.value = proj.model;
+              break;
+            }
+          }
+        }
+        // Apply per-project image size to the toolbar select
+        if (proj.imgsz) {
+          var imgszSel = document.getElementById("train-imgsz");
+          var found = false;
+          for (var j = 0; j < imgszSel.options.length; j++) {
+            if (parseInt(imgszSel.options[j].value) === proj.imgsz) {
+              imgszSel.value = String(proj.imgsz);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            var newOpt = document.createElement("option");
+            newOpt.value = String(proj.imgsz);
+            newOpt.textContent = String(proj.imgsz);
+            imgszSel.appendChild(newOpt);
+            imgszSel.value = String(proj.imgsz);
+          }
+        }
+        document.getElementById("btn-import").disabled = false;
+        document.getElementById("btn-annotate").disabled = false;
+        document.getElementById("btn-delete-project").disabled = false;
+        document.getElementById("btn-train").disabled = false;
+        document.getElementById("btn-export").disabled = !proj.has_trained_model;
+        return loadAnnotations();
+      }).catch(function(e) {
+        console.error("Failed to select project:", e);
+      });
+    }
+
+    function clearProjectUI() {
+      classes = [];
+      currentProjectModel = "";
+      annotations = [];
+      selectedIndex = -1;
+      boxes = [];
+      selectedBox = -1;
+      selectedSet = {};
+      imagePath = "";
+      thumbStrip.innerHTML = "";
+      noSelection.style.display = "";
+      noSelection.textContent = "Select or create a project to begin";
+      editorContainer.style.display = "none";
+      document.getElementById("stats-bar").textContent = "";
+      classSelect.innerHTML = "";
+      boxInfo.textContent = "";
+      document.getElementById("btn-import").disabled = true;
+      document.getElementById("btn-annotate").disabled = true;
+      document.getElementById("btn-delete-project").disabled = true;
+      document.getElementById("btn-train").disabled = true;
+      document.getElementById("btn-export").disabled = true;
+      document.getElementById("btn-accept").disabled = true;
+      document.getElementById("btn-reject").disabled = true;
+      document.getElementById("btn-delete-images").disabled = true;
+    }
+
+    function updateClassSelect() {
+      classSelect.innerHTML = "";
+      for (var i = 0; i < classes.length; i++) {
+        var opt = document.createElement("option");
+        opt.value = i;
+        opt.textContent = classes[i];
+        classSelect.appendChild(opt);
+      }
+    }
+
+    function loadAnnotations() {
+      if (!currentProject) {
+        return Promise.resolve();
+      }
+      return invoke("cmd_ml_get_annotations", { project: currentProject })
+        .then(function(data) {
+          annotations = data;
+          renderThumbnails();
+          updateStats();
+          updateNavButtons();
+          if (annotations.length > 0 && selectedIndex < 0) {
+            noSelection.textContent = "Select an image to review";
+          } else if (annotations.length === 0) {
+            noSelection.textContent = "Import or drop images to get started";
+          }
+        });
+    }
+
+    // -- New project modal --
+    function openNewProjectModal() {
+      document.getElementById("input-project-name").value = "";
+      document.getElementById("input-classes").value = "";
+      document.getElementById("modal-new-project").classList.add("visible");
+      document.getElementById("input-project-name").focus();
+    }
+
+    document.getElementById("btn-modal-cancel").addEventListener("click", function() {
+      document.getElementById("modal-new-project").classList.remove("visible");
+    });
+
+    document.getElementById("modal-new-project").addEventListener("click", function(e) {
+      if (e.target === this) {
+        this.classList.remove("visible");
+      }
+    });
+
+    document.getElementById("btn-modal-create").addEventListener("click", createProject);
+
+    document.getElementById("input-project-name").addEventListener("keydown", function(e) {
+      if (e.key === "Enter") {
+        createProject();
+      }
+    });
+    document.getElementById("input-classes").addEventListener("keydown", function(e) {
+      if (e.key === "Enter") {
+        createProject();
+      }
+    });
+
+    function createProject() {
+      var nameInput = document.getElementById("input-project-name");
+      var classesInput = document.getElementById("input-classes");
+      var name = nameInput.value.trim();
+      var classStr = classesInput.value.trim();
+
+      if (!name) {
+        nameInput.focus();
+        return;
+      }
+      if (!classStr) {
+        classesInput.focus();
+        return;
+      }
+
+      name = name.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+      var classList = classStr.split(",").map(function(c) {
+        return c.trim();
+      }).filter(function(c) {
+        return c.length > 0;
+      });
+
+      if (classList.length === 0) {
+        classesInput.focus();
+        return;
+      }
+
+      invoke("cmd_ml_create_project", {
+        name: name,
+        classes: classList,
+      }).then(function() {
+        document.getElementById("modal-new-project").classList.remove("visible");
+        loadProjects();
+        currentProject = name;
+        projectSelect.value = name;
+        selectProject(name);
+      }).catch(function(e) {
+        alert("Failed to create project: " + e);
+      });
+    }
+
+    // -- Delete project --
+    document.getElementById("btn-delete-project").addEventListener("click", function() {
+      if (!currentProject) {
+        return;
+      }
+      if (!confirm("Delete project '" + currentProject + "' and all its data?")) {
+        return;
+      }
+      stopAnnotator();
+
+      invoke("cmd_ml_delete_project", { name: currentProject }).then(function() {
+        currentProject = "";
+        clearProjectUI();
+        loadProjects();
+      }).catch(function(e) {
+        alert("Failed to delete project: " + e);
+      });
+    });
+
+    // ========================================================================
+    // Import images from filesystem
+    // ========================================================================
+
+    document.getElementById("btn-import").addEventListener("click", function() {
+      if (!currentProject) {
+        return;
+      }
+      dialogOpen({
+        multiple: true,
+        filters: [{
+          name: "Images",
+          extensions: ["jpg", "jpeg", "png", "bmp"],
+        }],
+      }).then(function(selected) {
+        if (!selected || selected.length === 0) {
+          return;
+        }
+        importPaths(selected);
+      }).catch(function(e) {
+        console.error("Failed to open file dialog:", e);
+      });
+    });
+
+    // ========================================================================
+    // Auto-annotator
+    // ========================================================================
+
+    document.getElementById("btn-annotate").addEventListener("click", function() {
+      if (annotating) {
+        stopAnnotator();
+      } else {
+        startAnnotator();
+      }
+    });
+
+    function startAnnotator() {
+      if (!currentProject) {
+        return;
+      }
+      invoke("cmd_ml_start_annotator", {
+        project: currentProject,
+      }).then(function() {
+        annotating = true;
+        var btn = document.getElementById("btn-annotate");
+        btn.textContent = "Stop Annotator";
+        btn.classList.add("btn-annotate-active");
+        document.getElementById("status-text").textContent = "Running...";
+        // Reload annotations (labels were cleared on the backend)
+        loadAnnotations();
+      }).catch(function(e) {
+        console.error("Failed to start annotator:", e);
+        document.getElementById("status-text").textContent = "Error: " + e;
+      });
+    }
+
+    function stopAnnotator() {
+      if (!annotating) {
+        return;
+      }
+      invoke("cmd_ml_stop_annotator").then(function() {
+        annotating = false;
+        var btn = document.getElementById("btn-annotate");
+        btn.textContent = "Auto-Annotate";
+        btn.classList.remove("btn-annotate-active");
+        document.getElementById("status-text").textContent = "";
+      }).catch(function(e) {
+        console.error("Failed to stop annotator:", e);
+      });
+    }
+
+    listen("ml-annotate", function(event) {
+      var evt = event.payload;
+      document.getElementById("status-text").textContent =
+        evt.image + " (" + evt.detections + " detections)";
+      loadAnnotations();
+    });
+
+    listen("ml-annotate-status", function(event) {
+      var p = event.payload || {};
+      if (p.status === "idle") {
+        document.getElementById("status-text").textContent =
+          "Idle (" + (p.total_processed || 0) + " annotated, watching for new)";
+        loadAnnotations();
+      }
+    });
+
+    listen("ml-annotate-done", function() {
+      annotating = false;
+      var btn = document.getElementById("btn-annotate");
+      btn.textContent = "Auto-Annotate";
+      btn.classList.remove("btn-annotate-active");
+      document.getElementById("status-text").textContent = "Done";
+    });
+
+    // ========================================================================
+    // Training
+    // ========================================================================
+
+    var epochsSlider = document.getElementById("train-epochs");
+    var epochsVal = document.getElementById("epochs-val");
+    epochsSlider.addEventListener("input", function() {
+      epochsVal.textContent = epochsSlider.value;
+    });
+
+    document.getElementById("btn-train").addEventListener("click", function() {
+      if (!currentProject) {
+        return;
+      }
+      var accepted = 0;
+      for (var i = 0; i < annotations.length; i++) {
+        if (annotations[i].status === "accepted") {
+          accepted++;
+        }
+      }
+      if (accepted < 5) {
+        alert("Need at least 5 accepted images to train. Currently have: " + accepted);
+        return;
+      }
+
+      var epochs = parseInt(epochsSlider.value);
+      var imgsz = parseInt(document.getElementById("train-imgsz").value);
+      var model = document.getElementById("train-model").value;
+      currentProjectModel = model;
+
+      training = true;
+      document.getElementById("btn-train").style.display = "none";
+      document.getElementById("btn-stop-train").style.display = "";
+      document.getElementById("btn-export").disabled = true;
+      document.getElementById("train-progress-track").style.display = "";
+      document.getElementById("status-text").textContent = "Starting...";
+      showMetricsPane();
+      resetMetrics(epochs);
+
+      invoke("cmd_ml_train", {
+        project: currentProject,
+        epochs: epochs,
+        imgsz: imgsz,
+        model: model,
+      }).catch(function(e) {
+        console.error("Failed to start training:", e);
+        document.getElementById("status-text").textContent = "Error: " + e;
+        resetTrainUI();
+      });
+    });
+
+    document.getElementById("btn-stop-train").addEventListener("click", function() {
+      invoke("cmd_ml_stop_training").catch(function(e) {
+        console.error("Failed to stop training:", e);
+      });
+    });
+
+    function fmtSecs(s) {
+      if (!s || s < 0) {
+        return "-";
+      }
+      s = Math.round(s);
+      if (s < 60) {
+        return s + "s";
+      }
+      var m = Math.floor(s / 60);
+      var rs = s % 60;
+      if (m < 60) {
+        return m + "m" + (rs ? " " + rs + "s" : "");
+      }
+      var h = Math.floor(m / 60);
+      var rm = m % 60;
+      return h + "h" + (rm ? " " + rm + "m" : "");
+    }
+
+    listen("ml-train-progress", function(event) {
+      var p = event.payload;
+      var pct = Math.round((p.epoch / p.epochs) * 100);
+      document.getElementById("train-progress-fill").style.width = pct + "%";
+      var line = "Epoch " + p.epoch + "/" + p.epochs +
+        " | mAP50: " + p.mAP50.toFixed(3) +
+        " | loss: " + (p.box_loss + p.cls_loss).toFixed(4);
+      if (p.epoch_secs) {
+        line += " | " + fmtSecs(p.epoch_secs) + "/ep";
+      }
+      if (p.elapsed_secs) {
+        line += " | elapsed " + fmtSecs(p.elapsed_secs);
+      }
+      if (p.eta_secs) {
+        line += " | eta " + fmtSecs(p.eta_secs);
+      }
+      document.getElementById("status-text").textContent = line;
+      pushMetric(p.epoch, p.box_loss, p.cls_loss, p.mAP50);
+    });
+
+    listen("ml-train-log", function(event) {
+      console.log("train:", event.payload);
+    });
+
+    listen("ml-train-done", function(event) {
+      var code = event.payload;
+      if (code === 0) {
+        document.getElementById("status-text").textContent =
+          "Training complete. Click Export to convert to TFLite.";
+      } else {
+        document.getElementById("status-text").textContent =
+          "Training stopped (code " + code + ")";
+      }
+      resetTrainUI();
+      // Enable Export only if a checkpoint actually got saved (full run, or
+      // a partial run that completed at least one epoch).
+      if (currentProject) {
+        invoke("cmd_ml_has_trained_model", { project: currentProject })
+          .then(function(has) {
+            document.getElementById("btn-export").disabled = !has;
+          })
+          .catch(function() {
+            document.getElementById("btn-export").disabled = true;
+          });
+      }
+    });
+
+    function resetTrainUI() {
+      training = false;
+      document.getElementById("btn-train").style.display = "";
+      document.getElementById("btn-stop-train").style.display = "none";
+      document.getElementById("train-progress-track").style.display = "none";
+      document.getElementById("train-progress-fill").style.width = "0%";
+    }
+
+    // -- Metrics pane (uPlot) --
+    var metricsPane = document.getElementById("metrics-pane");
+    var metricsChart = document.getElementById("metrics-chart");
+    var uplotInst = null;
+    var uplotData = [[], [], [], []];  // [epoch, box, cls, mAP50]
+
+    function showMetricsPane() {
+      noSelection.style.display = "none";
+      editorContainer.style.display = "none";
+      metricsPane.style.display = "";
+    }
+
+    function hideMetricsPane() {
+      metricsPane.style.display = "none";
+      if (uplotInst) {
+        uplotInst.destroy();
+        uplotInst = null;
+      }
+    }
+
+    var totalEpochsVal = 0;
+
+    function chartSize() {
+      return {
+        width: Math.max(50, metricsChart.clientWidth),
+        height: Math.max(50, metricsChart.clientHeight),
+      };
+    }
+
+    function resetMetrics(totalEpochs) {
+      totalEpochsVal = totalEpochs;
+      uplotData = [[], [], [], []];
+      document.getElementById("m-epoch").textContent = "0/" + totalEpochs;
+      document.getElementById("m-box").textContent = "-";
+      document.getElementById("m-cls").textContent = "-";
+      document.getElementById("m-map").textContent = "-";
+
+      if (uplotInst) {
+        uplotInst.destroy();
+        uplotInst = null;
+      }
+      var sz = chartSize();
+      var opts = {
+        width: sz.width,
+        height: sz.height,
+        scales: {
+          x: { time: false, range: [1, totalEpochs] },
+          loss: {},
+          map: { range: [0, 1] },
+        },
+        axes: [
+          { stroke: "#888", grid: { stroke: "#2a2a2f" }, ticks: { stroke: "#3a3a3f" }, label: "epoch", labelSize: 18, labelGap: 2 },
+          { scale: "loss", stroke: "#888", grid: { stroke: "#2a2a2f" }, ticks: { stroke: "#3a3a3f" }, label: "loss", labelSize: 18, labelGap: 2 },
+          { scale: "map", side: 1, stroke: "#888", grid: { show: false }, ticks: { stroke: "#3a3a3f" }, label: "mAP50", labelSize: 18, labelGap: 2 },
+        ],
+        series: [
+          { label: "epoch" },
+          { label: "box_loss", scale: "loss", stroke: "#4a9eff", width: 2 },
+          { label: "cls_loss", scale: "loss", stroke: "#ff9800", width: 2 },
+          { label: "mAP50",    scale: "map",  stroke: "#4caf50", width: 2 },
+        ],
+        legend: { show: false },
+      };
+      uplotInst = new uPlot(opts, uplotData, metricsChart);
+      // Re-sync size after layout settles (display: '' may not have flushed yet)
+      requestAnimationFrame(function() {
+        if (uplotInst) {
+          uplotInst.setSize(chartSize());
+        }
+      });
+    }
+
+    function pushMetric(epoch, box, cls, map) {
+      uplotData[0].push(epoch);
+      uplotData[1].push(box);
+      uplotData[2].push(cls);
+      uplotData[3].push(map);
+      if (uplotInst) {
+        uplotInst.setData(uplotData);
+      }
+      document.getElementById("m-epoch").textContent = epoch + "/" + totalEpochsVal;
+      document.getElementById("m-box").textContent = box.toFixed(4);
+      document.getElementById("m-cls").textContent = cls.toFixed(4);
+      document.getElementById("m-map").textContent = map.toFixed(3);
+    }
+
+    var metricsResizeObs = new ResizeObserver(function() {
+      if (uplotInst && metricsPane.style.display !== "none") {
+        uplotInst.setSize(chartSize());
+      }
+    });
+    metricsResizeObs.observe(metricsChart);
+
+    // -- Export (manual: triggered by Export button) --
+    document.getElementById("btn-export").addEventListener("click", function() {
+      if (!currentProject) {
+        return;
+      }
+      var imgsz = parseInt(document.getElementById("train-imgsz").value);
+      document.getElementById("btn-export").disabled = true;
+      document.getElementById("status-text").textContent = "Exporting TFLite...";
+      invoke("cmd_ml_export", {
+        project: currentProject,
+        imgsz: imgsz,
+      }).catch(function(e) {
+        console.error("Failed to start export:", e);
+        document.getElementById("status-text").textContent = "Export error: " + e;
+        document.getElementById("btn-export").disabled = false;
+      });
+    });
+
+    listen("ml-export-progress", function(event) {
+      var text = event.payload;
+      try {
+        var obj = JSON.parse(text);
+        if (obj.status) {
+          document.getElementById("status-text").textContent =
+            "Export: " + obj.status.replace(/_/g, " ");
+        }
+      } catch (e) {
+        // Raw log line
+      }
+    });
+
+    listen("ml-export-done", function(event) {
+      var code = event.payload;
+      document.getElementById("btn-export").disabled = false;
+      if (code === 0) {
+        document.getElementById("status-text").textContent =
+          "Export complete! Choose where to save the model.";
+        var imgsz = parseInt(document.getElementById("train-imgsz").value);
+        var sanitized = currentProject.replace(/[^a-zA-Z0-9_-]/g, "_");
+        var modelTag = currentProjectModel
+          ? "_" + currentProjectModel.replace(/[^a-zA-Z0-9_-]/g, "_")
+          : "";
+        var defaultName = sanitized + modelTag + "_" + imgsz + ".tflite";
+        dialogSave({
+          title: "Save model as...",
+          defaultPath: defaultName,
+          filters: [{ name: "TFLite", extensions: ["tflite"] }],
+        }).then(function(filePath) {
+          if (!filePath) {
+            document.getElementById("status-text").textContent =
+              "Export complete. model.tflite ready in project.";
+            return;
+          }
+          if (!/\.tflite$/i.test(filePath)) {
+            filePath = filePath + ".tflite";
+          }
+          return invoke("cmd_ml_save_export", {
+            project: currentProject,
+            destPath: filePath,
+          });
+        }).then(function(path) {
+          if (path) {
+            document.getElementById("status-text").textContent =
+              "Saved: " + path;
+          }
+        }).catch(function(e) {
+          console.error("Failed to save export:", e);
+          document.getElementById("status-text").textContent =
+            "Save failed: " + e;
+        });
+      } else {
+        document.getElementById("status-text").textContent =
+          "Export failed (code " + code + ")";
+      }
+    });
+
+    // ========================================================================
+    // Thumbnails and review
+    // ========================================================================
+
+    function renderThumbnails() {
+      thumbStrip.innerHTML = "";
+      for (var i = 0; i < annotations.length; i++) {
+        var item = annotations[i];
+        var div = document.createElement("div");
+        var cls = "thumb-item";
+        if (item.status === "accepted") {
+          cls += " status-accepted";
+        } else if (item.status === "rejected") {
+          cls += " status-rejected";
+        }
+        if (i === selectedIndex) {
+          cls += " selected";
+        }
+        if (selectedSet[i]) {
+          cls += " multi-selected";
+        }
+        div.className = cls;
+        div.dataset.index = i;
+
+        var img = document.createElement("img");
+        img.src = convertFileSrc(imagePath + "/" + item.image);
+        img.loading = "lazy";
+        div.appendChild(img);
+
+        var badge = document.createElement("div");
+        badge.className = "thumb-badge " + item.status;
+        div.appendChild(badge);
+
+        div.addEventListener("click", (function(idx) {
+          return function(e) { thumbClick(idx, e); };
+        })(i));
+
+        thumbStrip.appendChild(div);
+      }
+    }
+
+    function thumbClick(index, e) {
+      if (e.shiftKey && selectedIndex >= 0) {
+        // Range select
+        var lo = Math.min(selectedIndex, index);
+        var hi = Math.max(selectedIndex, index);
+        selectedSet = {};
+        for (var i = lo; i <= hi; i++) {
+          selectedSet[i] = true;
+        }
+        renderThumbnails();
+        updateDeleteBtn();
+        return;
+      }
+      var multiActive = Object.keys(selectedSet).length > 0;
+      if (e.metaKey || e.ctrlKey || multiActive) {
+        // Toggle in multi-select (also when a multi-selection is already active)
+        if (selectedSet[index]) {
+          delete selectedSet[index];
+        } else {
+          selectedSet[index] = true;
+        }
+        renderThumbnails();
+        updateNavButtons();
+        return;
+      }
+      // Normal click with no multi-selection: select that image
+      if (index === selectedIndex) {
+        return;
+      }
+      selectImage(index);
+      updateDeleteBtn();
+    }
+
+    function updateDeleteBtn() {
+      var count = Object.keys(selectedSet).length;
+      var btn = document.getElementById("btn-delete-images");
+      if (count > 1) {
+        btn.disabled = false;
+        btn.textContent = "Delete " + count + " Images";
+      } else if (selectedIndex >= 0) {
+        btn.disabled = false;
+        btn.textContent = "Delete Image";
+      } else {
+        btn.disabled = true;
+        btn.textContent = "Delete Image";
+      }
+    }
+
+    document.getElementById("btn-delete-images").addEventListener("click", function() {
+      var indices = Object.keys(selectedSet).map(Number);
+      if (indices.length === 0 && selectedIndex >= 0) {
+        indices = [selectedIndex];
+      }
+      if (indices.length === 0) {
+        return;
+      }
+      // Sort descending so splicing doesn't shift later indices
+      indices.sort(function(a, b) { return b - a; });
+
+      var promises = [];
+      for (var i = 0; i < indices.length; i++) {
+        var idx = indices[i];
+        if (idx >= 0 && idx < annotations.length) {
+          promises.push(invoke("cmd_ml_delete_image", {
+            project: currentProject,
+            image: annotations[idx].image,
+          }));
+        }
+      }
+
+      // The lowest deleted index is where we want to land after deletion
+      var landingIndex = indices[indices.length - 1];
+
+      Promise.all(promises).then(function() {
+        // Remove from annotations array (descending order)
+        for (var i = 0; i < indices.length; i++) {
+          annotations.splice(indices[i], 1);
+        }
+        selectedSet = {};
+        selectedBox = -1;
+
+        if (annotations.length === 0) {
+          selectedIndex = -1;
+          boxes = [];
+          noSelection.style.display = "";
+          noSelection.textContent = "Select an image to review";
+          editorContainer.style.display = "none";
+          renderThumbnails();
+        } else {
+          // Land on landingIndex if still valid, else last
+          var newIdx = Math.min(landingIndex, annotations.length - 1);
+          selectedIndex = -1;  // force selectImage to redraw
+          renderThumbnails();
+          selectImage(newIdx);
+        }
+        updateStats();
+        updateNavButtons();
+        updateDeleteBtn();
+      }).catch(function(e) {
+        console.error("Failed to delete images:", e);
+      });
+    });
+
+    function updateStats() {
+      var accepted = 0;
+      var rejected = 0;
+      var pending = 0;
+      for (var i = 0; i < annotations.length; i++) {
+        if (annotations[i].status === "accepted") {
+          accepted++;
+        } else if (annotations[i].status === "rejected") {
+          rejected++;
+        } else {
+          pending++;
+        }
+      }
+      document.getElementById("stats-bar").textContent =
+        annotations.length + " images | " +
+        accepted + " accepted, " + rejected + " rejected, " + pending + " pending";
+    }
+
+    // Returns the indices that Accept/Reject/Delete should operate on.
+    // If multi-selection is active, returns those; otherwise the single
+    // selected image (or empty array if nothing is selected).
+    function actionTargets() {
+      var keys = Object.keys(selectedSet);
+      if (keys.length > 0) {
+        return keys.map(Number).sort(function(a, b) { return a - b; });
+      }
+      if (selectedIndex >= 0) {
+        return [selectedIndex];
+      }
+      return [];
+    }
+
+    function updateNavButtons() {
+      var hasProject = currentProject !== "";
+      var hasImages = annotations.length > 0;
+      var targets = actionTargets();
+      var multi = Object.keys(selectedSet).length > 0;
+      var acceptBtn = document.getElementById("btn-accept");
+      var rejectBtn = document.getElementById("btn-reject");
+
+      // Count how many targets each action would actually affect
+      var nAcceptable = 0;
+      var nRejectable = 0;
+      for (var i = 0; i < targets.length; i++) {
+        var a = annotations[targets[i]];
+        if (a.status !== "accepted" && a.labels && a.labels.trim()) {
+          nAcceptable++;
+        }
+        if (a.status !== "rejected") {
+          nRejectable++;
+        }
+      }
+
+      acceptBtn.disabled = !hasProject || !hasImages || nAcceptable === 0;
+      acceptBtn.textContent = (multi && nAcceptable > 1)
+        ? "Accept (" + nAcceptable + ")"
+        : "Accept";
+      if (targets.length === 0) {
+        acceptBtn.title = "";
+      } else if (nAcceptable === 0 && !multi) {
+        var only = annotations[targets[0]];
+        if (only.status === "accepted") {
+          acceptBtn.title = "Already accepted";
+        } else if (!only.labels || !only.labels.trim()) {
+          acceptBtn.title = "Add at least one box";
+        } else {
+          acceptBtn.title = "";
+        }
+      } else {
+        acceptBtn.title = "";
+      }
+
+      rejectBtn.disabled = !hasProject || !hasImages || nRejectable === 0;
+      rejectBtn.textContent = (multi && nRejectable > 1)
+        ? "Reject (" + nRejectable + ")"
+        : "Reject";
+      rejectBtn.title = (nRejectable === 0 && !multi && targets.length > 0)
+        ? "Already rejected"
+        : "";
+
+      updateDeleteBtn();
+    }
+
+    // ========================================================================
+    // Image selection and annotation editor
+    // ========================================================================
+
+    function selectImage(index) {
+      if (index < 0 || index >= annotations.length) {
+        return;
+      }
+      selectedIndex = index;
+      selectedBox = -1;
+      var item = annotations[index];
+
+      var thumbs = thumbStrip.querySelectorAll(".thumb-item");
+      for (var i = 0; i < thumbs.length; i++) {
+        thumbs[i].classList.toggle("selected", i === index);
+      }
+
+      noSelection.style.display = "none";
+      hideMetricsPane();
+      editorContainer.style.display = "";
+
+      editorImg.onload = function() {
+        editorCanvas.width = editorImg.naturalWidth;
+        editorCanvas.height = editorImg.naturalHeight;
+        parseLabels(item.labels);
+        drawBoxes();
+      };
+      editorImg.src = convertFileSrc(imagePath + "/" + item.image);
+
+      if (thumbs[index]) {
+        thumbs[index].scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+
+      updateNavButtons();
+    }
+
+    function parseLabels(labelStr) {
+      boxes = [];
+      if (!labelStr || !labelStr.trim()) {
+        return;
+      }
+      var lines = labelStr.trim().split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var parts = lines[i].trim().split(/\s+/);
+        if (parts.length >= 5) {
+          boxes.push({
+            classId: parseInt(parts[0]),
+            cx: parseFloat(parts[1]),
+            cy: parseFloat(parts[2]),
+            w: parseFloat(parts[3]),
+            h: parseFloat(parts[4]),
+          });
+        }
+      }
+    }
+
+    function serializeLabels() {
+      var lines = [];
+      for (var i = 0; i < boxes.length; i++) {
+        var b = boxes[i];
+        lines.push(
+          b.classId + " " +
+          b.cx.toFixed(6) + " " +
+          b.cy.toFixed(6) + " " +
+          b.w.toFixed(6) + " " +
+          b.h.toFixed(6)
+        );
+      }
+      return lines.join("\n") + (lines.length > 0 ? "\n" : "");
+    }
+
+    // -- Drawing --
+    var BOX_COLORS = [
+      "#4a9eff", "#4caf50", "#ff9800", "#e91e63",
+      "#9c27b0", "#00bcd4", "#cddc39", "#ff5722",
+    ];
+
+    function drawBoxes() {
+      var cw = editorCanvas.width;
+      var ch = editorCanvas.height;
+      ctx.clearRect(0, 0, cw, ch);
+
+      for (var i = 0; i < boxes.length; i++) {
+        var b = boxes[i];
+        var x = (b.cx - b.w / 2) * cw;
+        var y = (b.cy - b.h / 2) * ch;
+        var w = b.w * cw;
+        var h = b.h * ch;
+        var color = BOX_COLORS[b.classId % BOX_COLORS.length];
+        var isSelected = i === selectedBox;
+
+        if (isSelected) {
+          ctx.fillStyle = color + "33";
+          ctx.fillRect(x, y, w, h);
+        }
+
+        ctx.strokeStyle = isSelected ? "#ffffff" : color;
+        ctx.lineWidth = isSelected ? 4 : 2;
+        ctx.strokeRect(x, y, w, h);
+        if (isSelected) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, w, h);
+        }
+
+        var label = classes[b.classId] || ("class " + b.classId);
+        ctx.font = isSelected ? "bold 13px sans-serif" : "12px sans-serif";
+        var tw = ctx.measureText(label).width;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y - 16, tw + 8, 16);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, x + 4, y - 4);
+
+        if (isSelected) {
+          var hs = 7;
+          ctx.fillStyle = "#fff";
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          var handles = [
+            [x, y], [x + w, y], [x, y + h], [x + w, y + h],
+            [x + w / 2, y], [x + w / 2, y + h], [x, y + h / 2], [x + w, y + h / 2],
+          ];
+          for (var hi = 0; hi < handles.length; hi++) {
+            var hx = handles[hi][0];
+            var hy = handles[hi][1];
+            ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
+            ctx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+          }
+        }
+      }
+
+      if (drawing && drawStart) {
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(drawStart.x, drawStart.y, drawStart.w, drawStart.h);
+        ctx.setLineDash([]);
+      }
+
+      if (selectedBox >= 0 && selectedBox < boxes.length) {
+        var sb = boxes[selectedBox];
+        boxInfo.textContent = "Box " + (selectedBox + 1) + "/" + boxes.length +
+          " | class: " + (classes[sb.classId] || sb.classId);
+      } else {
+        boxInfo.textContent = boxes.length + " boxes";
+      }
+
+      updateNavButtons();
+    }
+
+    // -- Mouse events on canvas --
+    function canvasCoords(e) {
+      var rect = editorCanvas.getBoundingClientRect();
+      var scaleX = editorCanvas.width / rect.width;
+      var scaleY = editorCanvas.height / rect.height;
+      return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY,
+      };
+    }
+
+    function hitTestBoxes(px, py) {
+      // When boxes overlap at the click point, prefer the smallest one
+      // so a tiny box inside a larger enclosing box is reachable.
+      var cw = editorCanvas.width;
+      var ch = editorCanvas.height;
+      var bestIdx = -1;
+      var bestArea = Infinity;
+      for (var i = 0; i < boxes.length; i++) {
+        var b = boxes[i];
+        var x1 = (b.cx - b.w / 2) * cw;
+        var y1 = (b.cy - b.h / 2) * ch;
+        var bw = b.w * cw;
+        var bh = b.h * ch;
+        if (px < x1 || px > x1 + bw || py < y1 || py > y1 + bh) {
+          continue;
+        }
+        var area = bw * bh;
+        if (area < bestArea) {
+          bestArea = area;
+          bestIdx = i;
+        }
+      }
+      return bestIdx;
+    }
+
+    function hitTestHandle(px, py) {
+      if (selectedBox < 0 || selectedBox >= boxes.length) {
+        return null;
+      }
+      var b = boxes[selectedBox];
+      var cw = editorCanvas.width;
+      var ch = editorCanvas.height;
+      var x = (b.cx - b.w / 2) * cw;
+      var y = (b.cy - b.h / 2) * ch;
+      var w = b.w * cw;
+      var h = b.h * ch;
+      var hs = 9;  // slightly larger hit area than visible handle
+      var handles = [
+        ["resize-tl", x, y],
+        ["resize-tr", x + w, y],
+        ["resize-bl", x, y + h],
+        ["resize-br", x + w, y + h],
+        ["resize-t", x + w / 2, y],
+        ["resize-b", x + w / 2, y + h],
+        ["resize-l", x, y + h / 2],
+        ["resize-r", x + w, y + h / 2],
+      ];
+      for (var i = 0; i < handles.length; i++) {
+        var hx = handles[i][1];
+        var hy = handles[i][2];
+        if (px >= hx - hs && px <= hx + hs && py >= hy - hs && py <= hy + hs) {
+          return handles[i][0];
+        }
+      }
+      return null;
+    }
+
+    function cursorForMode(mode) {
+      switch (mode) {
+        case "move": return "move";
+        case "resize-tl":
+        case "resize-br": return "nwse-resize";
+        case "resize-tr":
+        case "resize-bl": return "nesw-resize";
+        case "resize-t":
+        case "resize-b": return "ns-resize";
+        case "resize-l":
+        case "resize-r": return "ew-resize";
+        default: return "crosshair";
+      }
+    }
+
+    editorCanvas.addEventListener("mousemove", function(e) {
+      if (drawing || dragMode) {
+        return;
+      }
+      var pos = canvasCoords(e);
+      var handle = hitTestHandle(pos.x, pos.y);
+      if (handle) {
+        editorCanvas.style.cursor = cursorForMode(handle);
+        return;
+      }
+      var hit = hitTestBoxes(pos.x, pos.y);
+      if (hit >= 0 && hit === selectedBox) {
+        editorCanvas.style.cursor = "move";
+      } else if (hit >= 0) {
+        editorCanvas.style.cursor = "pointer";
+      } else {
+        editorCanvas.style.cursor = "crosshair";
+      }
+    });
+
+    editorCanvas.addEventListener("mousedown", function(e) {
+      e.preventDefault();
+      var pos = canvasCoords(e);
+
+      var handle = hitTestHandle(pos.x, pos.y);
+      if (handle) {
+        var sb = boxes[selectedBox];
+        dragMode = handle;
+        dragOrigin = {
+          mx: pos.x, my: pos.y,
+          cx: sb.cx, cy: sb.cy, w: sb.w, h: sb.h,
+        };
+        editorCanvas.style.cursor = cursorForMode(handle);
+        return;
+      }
+
+      var hit = hitTestBoxes(pos.x, pos.y);
+      if (hit >= 0) {
+        selectedBox = hit;
+        classSelect.value = boxes[hit].classId;
+        var b = boxes[hit];
+        dragMode = "move";
+        dragOrigin = {
+          mx: pos.x, my: pos.y,
+          cx: b.cx, cy: b.cy, w: b.w, h: b.h,
+        };
+        editorCanvas.style.cursor = "move";
+        drawBoxes();
+        return;
+      }
+
+      selectedBox = -1;
+      drawing = true;
+      drawStart = { x: pos.x, y: pos.y, w: 0, h: 0 };
+      drawBoxes();
+    });
+
+    // Use document-level listeners so drag continues outside canvas bounds
+    document.addEventListener("mousemove", function(e) {
+      var cw = editorCanvas.width;
+      var ch = editorCanvas.height;
+
+      if (dragMode && dragOrigin && selectedBox >= 0) {
+        var pos = canvasCoords(e);
+        var dx = (pos.x - dragOrigin.mx) / cw;
+        var dy = (pos.y - dragOrigin.my) / ch;
+        var b = boxes[selectedBox];
+        var minSize = 5 / cw;
+
+        if (dragMode === "move") {
+          b.cx = dragOrigin.cx + dx;
+          b.cy = dragOrigin.cy + dy;
+          // Clamp center so box stays in [0,1]
+          b.cx = Math.max(b.w / 2, Math.min(1 - b.w / 2, b.cx));
+          b.cy = Math.max(b.h / 2, Math.min(1 - b.h / 2, b.cy));
+        } else {
+          // Compute origin edges, then move the dragged edge(s)
+          var x1 = dragOrigin.cx - dragOrigin.w / 2;
+          var y1 = dragOrigin.cy - dragOrigin.h / 2;
+          var x2 = dragOrigin.cx + dragOrigin.w / 2;
+          var y2 = dragOrigin.cy + dragOrigin.h / 2;
+
+          var dir = dragMode.substring(dragMode.indexOf("-") + 1);
+          if (dir.indexOf("l") >= 0) { x1 = Math.min(x2 - minSize, Math.max(0, x1 + dx)); }
+          if (dir.indexOf("r") >= 0) { x2 = Math.max(x1 + minSize, Math.min(1, x2 + dx)); }
+          if (dir.indexOf("t") >= 0) { y1 = Math.min(y2 - minSize, Math.max(0, y1 + dy)); }
+          if (dir.indexOf("b") >= 0) { y2 = Math.max(y1 + minSize, Math.min(1, y2 + dy)); }
+
+          b.cx = (x1 + x2) / 2;
+          b.cy = (y1 + y2) / 2;
+          b.w = x2 - x1;
+          b.h = y2 - y1;
+        }
+        drawBoxes();
+        return;
+      }
+
+      if (!drawing || !drawStart) {
+        return;
+      }
+      var pos = canvasCoords(e);
+      drawStart.w = pos.x - drawStart.x;
+      drawStart.h = pos.y - drawStart.y;
+      drawBoxes();
+    });
+
+    document.addEventListener("mouseup", function(e) {
+      if (dragMode) {
+        dragMode = null;
+        dragOrigin = null;
+        editorCanvas.style.cursor = "crosshair";
+        drawBoxes();
+        saveCurrentLabels();
+        return;
+      }
+
+      if (!drawing || !drawStart) {
+        return;
+      }
+      drawing = false;
+      var cw = editorCanvas.width;
+      var ch = editorCanvas.height;
+
+      var pos = canvasCoords(e);
+      var x = drawStart.x;
+      var y = drawStart.y;
+      var w = pos.x - drawStart.x;
+      var h = pos.y - drawStart.y;
+      if (w < 0) { x += w; w = -w; }
+      if (h < 0) { y += h; h = -h; }
+
+      // Clamp to canvas/image bounds
+      if (x < 0) { w += x; x = 0; }
+      if (y < 0) { h += y; y = 0; }
+      if (x + w > cw) { w = cw - x; }
+      if (y + h > ch) { h = ch - y; }
+
+      if (w < 5 || h < 5) {
+        drawStart = null;
+        drawBoxes();
+        return;
+      }
+
+      var classId = parseInt(classSelect.value) || 0;
+      boxes.push({
+        classId: classId,
+        cx: (x + w / 2) / cw,
+        cy: (y + h / 2) / ch,
+        w: w / cw,
+        h: h / ch,
+      });
+      selectedBox = boxes.length - 1;
+      drawStart = null;
+      drawBoxes();
+      saveCurrentLabels();
+    });
+
+    classSelect.addEventListener("change", function() {
+      if (selectedBox >= 0 && selectedBox < boxes.length) {
+        boxes[selectedBox].classId = parseInt(classSelect.value);
+        drawBoxes();
+        saveCurrentLabels();
+      }
+    });
+
+    function deleteSelectedBox() {
+      if (selectedBox >= 0 && selectedBox < boxes.length) {
+        boxes.splice(selectedBox, 1);
+        selectedBox = -1;
+        drawBoxes();
+        saveCurrentLabels();
+      }
+    }
+
+    function saveCurrentLabels() {
+      if (selectedIndex < 0) {
+        return;
+      }
+      var item = annotations[selectedIndex];
+      var labels = serializeLabels();
+      item.labels = labels;
+      // Re-evaluate Accept/Reject now that labels are up to date
+      updateNavButtons();
+      invoke("cmd_ml_save_annotation", {
+        project: currentProject,
+        image: item.image,
+        labels: labels,
+      }).catch(function(e) {
+        console.error("Failed to save annotation:", e);
+      });
+    }
+
+    function applyReviewStatus(status) {
+      if (!currentProject) {
+        return;
+      }
+      var targets = actionTargets();
+      if (targets.length === 0) {
+        return;
+      }
+
+      // Filter to indices the action would actually change
+      var effective = [];
+      for (var i = 0; i < targets.length; i++) {
+        var a = annotations[targets[i]];
+        if (status === "accepted") {
+          if (a.status === "accepted") {
+            continue;
+          }
+          if (!a.labels || !a.labels.trim()) {
+            continue;
+          }
+        } else if (status === "rejected") {
+          if (a.status === "rejected") {
+            continue;
+          }
+        }
+        effective.push(targets[i]);
+      }
+
+      if (effective.length === 0) {
+        return;
+      }
+
+      var promises = [];
+      for (var k = 0; k < effective.length; k++) {
+        var idx = effective[k];
+        var item = annotations[idx];
+        item.status = status;
+        if (status === "rejected") {
+          item.labels = "";
+          if (idx === selectedIndex) {
+            boxes = [];
+          }
+          promises.push(invoke("cmd_ml_save_annotation", {
+            project: currentProject,
+            image: item.image,
+            labels: "",
+          }));
+        }
+        promises.push(invoke("cmd_ml_set_review_status", {
+          project: currentProject,
+          image: item.image,
+          status: status,
+        }));
+      }
+
+      Promise.all(promises).catch(function(e) {
+        console.error("Failed to update review status:", e);
+      });
+
+      // For single-target, advance to next image (preserves the snappy review flow)
+      var advance = effective.length === 1 && Object.keys(selectedSet).length === 0;
+
+      if (status === "rejected" && selectedIndex >= 0 && effective.indexOf(selectedIndex) >= 0) {
+        drawBoxes();
+      }
+
+      renderThumbnails();
+      updateStats();
+      updateNavButtons();
+
+      if (advance) {
+        // Find the next image that still needs review (not accepted, not rejected).
+        // Search forward first, then wrap to the start.
+        var n = annotations.length;
+        var nextIdx = -1;
+        for (var s = 1; s <= n; s++) {
+          var probe = (selectedIndex + s) % n;
+          if (probe === selectedIndex) {
+            break;
+          }
+          var st = annotations[probe].status;
+          if (st !== "accepted" && st !== "rejected") {
+            nextIdx = probe;
+            break;
+          }
+        }
+        if (nextIdx >= 0) {
+          selectImage(nextIdx);
+        }
+      }
+    }
+
+    document.getElementById("btn-accept").addEventListener("click", function() {
+      applyReviewStatus("accepted");
+    });
+    document.getElementById("btn-reject").addEventListener("click", function() {
+      applyReviewStatus("rejected");
+    });
+
+    // ========================================================================
+    // Init
+    // ========================================================================
+
+    loadProjects();
+  </script>
+</body>
+</html>

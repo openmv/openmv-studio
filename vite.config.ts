@@ -20,6 +20,11 @@ export default defineConfig({
           dest: 'libs/draco',
           rename: { stripBase: 7 },
         },
+        {
+          src: 'node_modules/uplot/dist/*',
+          dest: 'libs/uplot',
+          rename: { stripBase: 3 },
+        },
       ],
     }),
   ],

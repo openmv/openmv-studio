@@ -708,6 +708,8 @@ async function eraseFilesystem() {
     return;
   }
 
+  win.setZoom(scale);
+
   try {
     await invoke("cmd_erase_filesystem");
   } catch (e: any) {
@@ -1364,6 +1366,8 @@ async function openAboutDialog() {
     aboutWin = null;
     return;
   }
+
+  win.setZoom(scale);
 
   const readyUnlisten = await listen("about-ready", async () => {
     readyUnlisten();

@@ -42,6 +42,8 @@ export async function openResourceWindow(
     win.once("tauri://error", (e) => reject(e));
   });
 
+  win.setZoom(scale);
+
   // Wait for the window to signal completion or be closed.
   // Returns true if downloads completed, false if dismissed.
   return new Promise<boolean>((resolve) => {

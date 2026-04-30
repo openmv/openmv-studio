@@ -621,3 +621,91 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--bg-deep);
   border-radius: var(--radius-sm);
 }
+
+/* -- Training panel -------------------------------------------------------- */
+.training-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  font-size: 11px;
+}
+.training-project-bar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.training-select {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.training-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.training-btn:hover {
+  background: var(--bg-active);
+}
+.training-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.training-btn-primary:hover {
+  opacity: 0.9;
+}
+.training-btn-danger {
+  color: var(--error);
+}
+.training-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.training-label {
+  color: var(--text-tertiary);
+  min-width: 50px;
+}
+.training-slider {
+  flex: 1;
+}
+.training-value {
+  color: var(--text-secondary);
+  font-family: var(--font-code);
+  min-width: 35px;
+  text-align: right;
+}
+.training-status {
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 2px 0;
+}
+.training-progress {
+  margin-top: 4px;
+}
+.training-progress-text {
+  color: var(--text-secondary);
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+.training-progress-bar {
+  height: 4px;
+  background: var(--bg-deep);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.training-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}

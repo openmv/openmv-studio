@@ -14,6 +14,7 @@ import { wglCtx, wglWidth, wglHeight } from "./gl";
 import { hideWelcome } from "./welcome";
 import { createFile, switchToFile, openFiles } from "./files";
 import { openPinoutViewer } from "./pinout";
+import { openTrainingWindow } from "./training";
 
 // --- Init and tab switching ---
 
@@ -1501,6 +1502,11 @@ function initSidebar() {
 
       if (panel === "pinout") {
         openPinoutViewer();
+        return;
+      }
+
+      if (panel === "ml") {
+        openTrainingWindow();
         return;
       }
 

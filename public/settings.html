@@ -483,6 +483,9 @@
     document.getElementById("set-scale").oninput = function() {
       var v = parseInt(this.value);
       document.getElementById("scale-label").textContent = v + "%";
+    };
+    document.getElementById("set-scale").onchange = function() {
+      var v = parseInt(this.value);
       changed("uiScale", v / 100);
     };
 

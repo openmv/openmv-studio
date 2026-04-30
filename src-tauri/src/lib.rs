@@ -9,6 +9,7 @@ mod checksum;
 mod dfu;
 mod protocol;
 mod resources;
+mod training;
 mod transport;
 
 use std::sync::{Arc, Mutex, mpsc};
@@ -819,11 +820,10 @@ fn build_menu(
         .build()?;
 
     let tools = SubmenuBuilder::new(app, "Tools")
-        .text("pinout-viewer", "Pinout Viewer")
-        .separator()
         .text("model-zoo", "Model Zoo")
         .text("apriltag-gen", "AprilTag Generator")
         .text("romfs-editor", "ROMFS Editor")
+        .text("pinout-viewer", "Pinout Viewer")
         .build()?;
 
     let device = SubmenuBuilder::new(app, "Device")
@@ -879,6 +879,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(Arc::new(AtomicBool::new(false)))
         .manage(Arc::new(SetupComplete(AtomicBool::new(false))))
+        .manage(Arc::new(training::MlProcessState::new()))
         .manage(Arc::new(Mutex::new(AppState {
             boards: vec![],
             sensors: serde_json::json!({}),
@@ -916,6 +917,22 @@ pub fn run() {
             resources::cmd_download_resource,
             resources::cmd_resource_path,
             resources::cmd_list_stubs,
+            training::cmd_ml_create_project,
+            training::cmd_ml_list_projects,
+            training::cmd_ml_delete_project,
+            training::cmd_ml_import_images,
+            training::cmd_ml_start_annotator,
+            training::cmd_ml_stop_annotator,
+            training::cmd_ml_get_annotations,
+            training::cmd_ml_save_annotation,
+            training::cmd_ml_set_review_status,
+            training::cmd_ml_delete_image,
+            training::cmd_ml_train,
+            training::cmd_ml_stop_training,
+            training::cmd_ml_export,
+            training::cmd_ml_save_export,
+            training::cmd_ml_has_trained_model,
+            training::cmd_ml_project_image_path,
         ])
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
