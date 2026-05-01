@@ -3,6 +3,10 @@ name: Package and Upload Resources
 on:
   workflow_dispatch:
 
+concurrency:
+  group: studio-resources
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
