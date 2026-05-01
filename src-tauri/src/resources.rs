@@ -273,8 +273,8 @@ fn extract_tar_xz(archive: &Path, dest: &Path, name: &str, app: &AppHandle) -> R
     let mut tar = tar::Archive::new(decompressed);
 
     if name == "tools" {
-        // SDK archive has a top-level directory like openmv-sdk-1.4.0-darwin-arm64/
-        // We need to flatten: extract bin/dfu-util*, stedgeai/, python/ into dest root
+        // Tools archive has a top-level directory like tools-<plat>/.
+        // We flatten it: extract bin/dfu-util*, stedgeai/, python/ into dest root.
         extract_tools_archive(&mut tar, dest, app, name)?;
     } else {
         // Examples and stubs: strip one directory level (the archive root)
@@ -332,9 +332,9 @@ fn extract_tools_archive(
             .map_err(|e| format!("Tar path error: {}", e))?
             .into_owned();
 
-        // Path looks like: openmv-sdk-1.4.0-platform/bin/dfu-util
-        //                   openmv-sdk-1.4.0-platform/stedgeai/...
-        //                   openmv-sdk-1.4.0-platform/python/...
+        // Path looks like: tools-<plat>/bin/dfu-util
+        //                   tools-<plat>/stedgeai/...
+        //                   tools-<plat>/python/...
         let components: Vec<_> = path.components().collect();
         if components.len() < 2 {
             continue;

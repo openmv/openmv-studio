@@ -16,8 +16,6 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
-SDK_VERSION="1.4.0"
-SDK_BASE_URL="https://download.openmv.io/sdk"
 STUDIO_BASE_URL="https://download.openmv.io/studio"
 BOARDS_REPO="https://github.com/openmv/openmv-boards.git"
 OPENMV_REPO="https://github.com/openmv/openmv.git"
@@ -27,8 +25,6 @@ FIRMWARE_GH_REPO="openmv/openmv"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUT_DIR="${PROJECT_DIR}/dist/resources"
-
-SDK_PLATFORMS=("linux-x86_64" "darwin-arm64" "windows-x86_64")
 
 # Stable firmware tag/version (resolved once).
 STABLE_FW_TAG=""
@@ -334,40 +330,21 @@ generate_manifest() {
         emit_resource_entry "stubs"
         printf ',\n'
 
-        # Tools (no channel split)
-        printf '  "tools": {\n'
-        printf '    "version": "%s",\n' "$SDK_VERSION"
-        printf '    "platforms": {\n'
+        # Tools: openmv-sdk publishes tools.json describing the latest tools
+        # release (version + per-platform url/sha256/size). We splice it in
+        # verbatim under "tools".
+        local tools_json
+        tools_json=$(curl -fsSL "${STUDIO_BASE_URL}/tools.json") || {
+            echo "ERROR: Could not fetch ${STUDIO_BASE_URL}/tools.json" >&2
+            exit 1
+        }
+        printf '  "tools": '
+        printf '%s' "$tools_json" | python3 -c '
+import json, sys
+print(json.dumps(json.load(sys.stdin), indent=2).replace("\n", "\n  "))
+'
 
-        local first=true
-        for platform in "${SDK_PLATFORMS[@]}"; do
-            local sdk_name="openmv-sdk-${SDK_VERSION}-${platform}"
-            local sdk_url="${SDK_BASE_URL}/${sdk_name}.tar.xz"
-            local sdk_sha256_url="${sdk_url}.sha256"
-
-            echo "  Fetching checksum for ${sdk_name}..." >&2
-            local sdk_sha256 sdk_size
-            sdk_sha256=$(curl -fsSL "$sdk_sha256_url" | awk '{print $1}') || {
-                echo "WARNING: Could not fetch checksum for ${sdk_name}" >&2
-                continue
-            }
-
-            sdk_size=$(curl -fsSLI "$sdk_url" | grep -i content-length | tail -1 | awk '{print $2}' | tr -d '\r')
-            if [ -z "$sdk_size" ]; then
-                sdk_size=0
-            fi
-
-            if [ "$first" = true ]; then
-                first=false
-            else
-                printf ',\n'
-            fi
-
-            printf '      "%s": {\n        "url": "%s",\n        "sha256": "%s",\n        "size": %s\n      }' \
-                "$platform" "$sdk_url" "$sdk_sha256" "$sdk_size"
-        done
-
-        printf '\n    }\n  }\n}\n'
+        printf '\n}\n'
     } > "$manifest"
 
     echo "Manifest written to ${manifest}"
