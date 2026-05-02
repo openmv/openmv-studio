@@ -540,17 +540,35 @@ fn enter_dfu_mode(
         .copied()
         .ok_or("Missing partition size")?;
 
+    let bootloader_vid_pid = resolved.bootloader_vid_pid.unwrap();
+
     if resolved.in_firmware_mode {
+        // Let firmware finish its soft reboot before SysBoot.
+        std::thread::sleep(Duration::from_millis(500));
+
         let st = state.lock().map_err(|e| e.to_string())?;
         if let Some(ref tx) = st.cmd_tx {
             let _ = tx.send(Command::Bootloader);
             drop(st);
             let _ = app.emit("dfu-status", "Entering bootloader...");
-            std::thread::sleep(Duration::from_secs(3));
+            // Poll for bootloader vid:pid; cap at 5s.
+            let target = bootloader_vid_pid.to_lowercase();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Ok(devices) = dfu::list_devices(app) {
+                    if devices.iter().any(|vp| *vp == target) {
+                        break;
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
         }
     }
 
-    Ok((resolved.bootloader_vid_pid.unwrap(), part_args, part_size))
+    Ok((bootloader_vid_pid, part_args, part_size))
 }
 
 #[tauri::command]
@@ -640,6 +658,130 @@ async fn cmd_romfs_write(
         let _ = handle.emit("dfu-total", image.len() as u64);
         dfu::download_partition(&handle, &vid_pid, &part_args, &image, true)?;
         let _ = handle.emit("dfu-status", "ROMFS write complete.");
+        let _ = handle.emit("dfu-done", ());
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+    running.0.store(false, Ordering::SeqCst);
+    result
+}
+
+// Deploy a trained model into the connected board's ROMFS. Validates that
+// the connected board matches the requested target and that an export for
+// that exact target is already on disk. The user is expected to click
+// Export (with the desired target) before Deploy -- mismatches fail loud
+// rather than silently re-running the pipeline.
+#[tauri::command]
+async fn cmd_ml_deploy(
+    project: String,
+    target: String,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    dfu_running: State<'_, Arc<DfuRunning>>,
+) -> Result<(), String> {
+    training::validate_target(&target)?;
+
+    let resolved = dfu::resolve_dfu_board(&app, state.inner())?;
+    if let Some((required_board, _)) = training::target_to_partition(&target) {
+        if resolved.board_type != required_board {
+            return Err(format!(
+                "Target {} requires {} but {} is connected",
+                target, required_board, resolved.board_type
+            ));
+        }
+    }
+    let partition_index = training::target_to_partition(&target)
+        .map(|(_, p)| p)
+        .unwrap_or(0);
+    if partition_index >= resolved.romfs_partition.as_ref().unwrap().len() {
+        return Err(format!(
+            "Board {} does not expose partition {} for target {}",
+            resolved.board_type, partition_index, target
+        ));
+    }
+
+    let export_dir = training::export_dir(&app, &project)?;
+    // Pipeline writes a single descriptively-named .tflite per export.
+    let tflite_src = std::fs::read_dir(&export_dir)
+        .ok()
+        .and_then(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                .find(|p| p.extension().and_then(|s| s.to_str()) == Some("tflite"))
+        })
+        .ok_or_else(|| "No exported model found. Run Export first.".to_string())?;
+    match training::read_target_marker(&app, &project)? {
+        Some(t) if t == target => {}
+        Some(t) => {
+            return Err(format!(
+                "Exported model targets {}, not {}. Re-run Export with the desired target.",
+                t, target
+            ));
+        }
+        None => {
+            return Err(
+                "Exported model has no target marker. Re-run Export with the desired target."
+                    .to_string(),
+            );
+        }
+    }
+
+    let model_name = tflite_src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid tflite filename")?
+        .to_string();
+    let labels_name = tflite_src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|stem| format!("{}.txt", stem))
+        .ok_or("Invalid tflite filename")?;
+
+    let model_bytes = std::fs::read(&tflite_src)
+        .map_err(|e| format!("Failed to read {}: {}", model_name, e))?;
+    let labels_path = export_dir.join("labels.txt");
+    let labels_bytes = if labels_path.exists() {
+        Some(
+            std::fs::read(&labels_path)
+                .map_err(|e| format!("Failed to read labels.txt: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    let state_arc = state.inner().clone();
+    let handle = app.clone();
+    let running = dfu_running.inner().clone();
+    running.0.store(true, Ordering::SeqCst);
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let (vid_pid, part_args, part_size) =
+            enter_dfu_mode(&handle, &state_arc, partition_index)?;
+
+        let _ = handle.emit("dfu-total", part_size as u64);
+        let raw = dfu::upload_partition(&handle, &vid_pid, &part_args, part_size)?;
+        let _ = handle.emit("dfu-status", "Parsing ROMFS image...");
+        let mut entries = romfs::parse(&raw)?;
+
+        entries.retain(|e| e.name != model_name && e.name != labels_name);
+        entries.push(romfs::RomfsEntry {
+            name: model_name,
+            data: model_bytes,
+            alignment: 32,
+        });
+        if let Some(bytes) = labels_bytes {
+            entries.push(romfs::RomfsEntry {
+                name: labels_name,
+                data: bytes,
+                alignment: 4,
+            });
+        }
+
+        let image = romfs::build(&entries, part_size)?;
+
+        let _ = handle.emit("dfu-status", "Writing model to ROMFS...");
+        let _ = handle.emit("dfu-total", image.len() as u64);
+        dfu::download_partition(&handle, &vid_pid, &part_args, &image, true)?;
+        let _ = handle.emit("dfu-status", "Deploy complete.");
         let _ = handle.emit("dfu-done", ());
         Ok(())
     })
@@ -1249,9 +1391,11 @@ pub fn run() {
             training::cmd_ml_train,
             training::cmd_ml_stop_training,
             training::cmd_ml_export,
+            training::cmd_ml_stop_export,
             training::cmd_ml_save_export,
             training::cmd_ml_has_trained_model,
             training::cmd_ml_project_image_path,
+            cmd_ml_deploy,
         ])
         .plugin(tauri_plugin_process::init())
         .setup(|app| {

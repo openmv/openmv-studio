@@ -63,11 +63,12 @@ pub struct TrainProgressEvent {
     pub eta_secs: f64,
 }
 
-/// Holds the PID of a running annotator or training subprocess so it can
-/// be stopped on demand.
+/// Holds the PID of a running annotator, training, or export subprocess
+/// so it can be stopped on demand.
 pub struct MlProcessState {
     pub annotator_pid: Mutex<Option<u32>>,
     pub training_pid: Mutex<Option<u32>>,
+    pub export_pid: Mutex<Option<u32>>,
     pub import_running: AtomicBool,
 }
 
@@ -76,6 +77,7 @@ impl MlProcessState {
         Self {
             annotator_pid: Mutex::new(None),
             training_pid: Mutex::new(None),
+            export_pid: Mutex::new(None),
             import_running: AtomicBool::new(false),
         }
     }
@@ -86,14 +88,24 @@ impl MlProcessState {
 fn kill_process(pid: u32) {
     #[cfg(unix)]
     {
+        let output = std::process::Command::new("pgrep")
+            .args(&["-P", &pid.to_string()])
+            .output();
+        if let Ok(out) = output {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Ok(child_pid) = line.trim().parse::<u32>() {
+                    kill_process(child_pid);
+                }
+            }
+        }
         let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
+            .args(&["-KILL", &pid.to_string()])
             .output();
     }
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")
-            .args(&["/PID", &pid.to_string(), "/F"])
+            .args(&["/PID", &pid.to_string(), "/T", "/F"])
             .output();
     }
 }
@@ -139,6 +151,17 @@ fn models_dir(app: &AppHandle) -> Result<String, String> {
     if !dir.exists() {
         return Err(format!(
             "Models resource not found at {}. Download resources from Settings.",
+            dir.display()
+        ));
+    }
+    Ok(dir.to_string_lossy().to_string())
+}
+
+fn stedgeai_dir(app: &AppHandle) -> Result<String, String> {
+    let dir = resolve_resource(app, "tools/stedgeai");
+    if !dir.exists() {
+        return Err(format!(
+            "stedgeai not found at {}. Download resources from Settings.",
             dir.display()
         ));
     }
@@ -397,12 +420,10 @@ pub async fn cmd_ml_start_annotator(
     project: String,
     conf: Option<f32>,
 ) -> Result<(), String> {
-    // Stop any existing annotator
     {
         let mut pid = state.annotator_pid.lock().unwrap();
-        if pid.is_some() {
-            *pid = None;
-            // The old process will be orphaned; this is acceptable for now.
+        if let Some(p) = pid.take() {
+            kill_process(p);
         }
     }
 
@@ -792,67 +813,186 @@ pub fn cmd_ml_stop_training(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn cmd_ml_export(
+/// Map a deployment target to (required board_type, partition index).
+/// `cpu` returns None -- it works on any ROMFS-capable board, partition 0.
+pub fn target_to_partition(target: &str) -> Option<(&'static str, usize)> {
+    match target {
+        "cpu" => None,
+        "ethos-u55-256" => Some(("OPENMV_AE3", 0)),
+        "ethos-u55-128" => Some(("OPENMV_AE3", 1)),
+        "st-neural-art" => Some(("OPENMV_N6", 0)),
+        _ => None,
+    }
+}
+
+const VALID_TARGETS: &[&str] = &["cpu", "ethos-u55-128", "ethos-u55-256", "st-neural-art"];
+
+pub fn validate_target(target: &str) -> Result<(), String> {
+    if VALID_TARGETS.contains(&target) {
+        Ok(())
+    } else {
+        Err(format!("Invalid target: {}", target))
+    }
+}
+
+/// Path to the export directory for a given project.
+pub fn export_dir(app: &AppHandle, project: &str) -> Result<PathBuf, String> {
+    Ok(project_dir(app, project)?.join("export"))
+}
+
+/// Read the .target sidecar written by export.py. Returns None if absent.
+pub fn read_target_marker(app: &AppHandle, project: &str) -> Result<Option<String>, String> {
+    let path = export_dir(app, project)?.join(".target");
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(
+        std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read .target marker: {}", e))?
+            .trim()
+            .to_string(),
+    ))
+}
+
+/// Run the export pipeline to completion, streaming progress through
+/// the `ml-export-progress` event channel. Returns the python exit code.
+/// `target` is one of the strings in `VALID_TARGETS`.
+pub async fn run_export(
     app: AppHandle,
+    state: Arc<MlProcessState>,
     project: String,
-    imgsz: Option<u32>,
-) -> Result<(), String> {
+    imgsz: u32,
+    target: String,
+) -> Result<i32, String> {
+    validate_target(&target)?;
     let proj = project_dir(&app, &project)?;
-    log::info!("Starting export: project={}, imgsz={:?}", project, imgsz);
     let py = python_path(&app)?;
     let script = script_path(&app, "export.py")?;
-    let imgsz_str = format!("{}", imgsz.unwrap_or(192));
+    let imgsz_str = format!("{}", imgsz);
+    let proj_str = proj.to_string_lossy().into_owned();
+
+    let mut args: Vec<String> = vec![
+        script,
+        "--project".into(),
+        proj_str,
+        "--imgsz".into(),
+        imgsz_str,
+        "--target".into(),
+        target.clone(),
+    ];
+    if target != "cpu" {
+        args.push("--models-dir".into());
+        args.push(models_dir(&app)?);
+    }
+    if target == "st-neural-art" {
+        args.push("--stedgeai-dir".into());
+        args.push(stedgeai_dir(&app)?);
+    }
+
+    log::info!(
+        "Starting export: project={}, imgsz={}, target={}",
+        project,
+        imgsz,
+        target
+    );
 
     let sidecar = app
         .shell()
         .command(&py)
         .env("PYTHONUNBUFFERED", "1")
-        .args(&[
-            &script,
-            "--project",
-            &proj.to_string_lossy(),
-            "--imgsz",
-            &imgsz_str,
-        ]);
+        .args(args);
 
-    let (mut rx, _child) = sidecar
+    let (mut rx, child) = sidecar
         .spawn()
         .map_err(|e| format!("Failed to spawn export: {}", e))?;
 
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(line) => {
-                    let text = String::from_utf8_lossy(&line);
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        log::info!("export: {}", trimmed);
-                        let _ = app_clone.emit("ml-export-progress", trimmed);
-                    }
+    {
+        let mut pid = state.export_pid.lock().unwrap();
+        *pid = Some(child.pid());
+    }
+
+    let mut exit_code: i32 = -1;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                let text = String::from_utf8_lossy(&line);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    log::info!("export: {}", trimmed);
+                    let _ = app.emit("ml-export-progress", trimmed);
                 }
-                CommandEvent::Stderr(line) => {
-                    let text = String::from_utf8_lossy(&line);
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        log::warn!("export stderr: {}", trimmed);
-                        let _ = app_clone.emit("ml-export-progress", trimmed);
-                    }
-                }
-                CommandEvent::Terminated(payload) => {
-                    log::info!("export exited with code {:?}", payload.code);
-                    let _ = app_clone.emit(
-                        "ml-export-done",
-                        payload.code.unwrap_or(-1),
-                    );
-                    break;
-                }
-                _ => {}
             }
+            CommandEvent::Stderr(line) => {
+                let text = String::from_utf8_lossy(&line);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    log::warn!("export stderr: {}", trimmed);
+                    let _ = app.emit("ml-export-progress", trimmed);
+                }
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code.unwrap_or(-1);
+                log::info!("export exited with code {}", exit_code);
+                break;
+            }
+            _ => {}
         }
+    }
+
+    {
+        let mut pid = state.export_pid.lock().unwrap();
+        *pid = None;
+    }
+
+    Ok(exit_code)
+}
+
+#[tauri::command]
+pub async fn cmd_ml_export(
+    app: AppHandle,
+    state: State<'_, Arc<MlProcessState>>,
+    project: String,
+    imgsz: Option<u32>,
+    target: Option<String>,
+) -> Result<(), String> {
+    let imgsz_v = imgsz.unwrap_or(192);
+    let target_v = target.unwrap_or_else(|| "cpu".to_string());
+    validate_target(&target_v)?;
+
+    let app_clone = app.clone();
+    let state_clone = Arc::clone(&state);
+    tauri::async_runtime::spawn(async move {
+        let code = match run_export(
+            app_clone.clone(),
+            state_clone,
+            project,
+            imgsz_v,
+            target_v,
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = app_clone.emit("ml-export-progress", format!("error: {}", e));
+                -1
+            }
+        };
+        let _ = app_clone.emit("ml-export-done", code);
     });
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_ml_stop_export(
+    app: AppHandle,
+    state: State<'_, Arc<MlProcessState>>,
+) -> Result<(), String> {
+    let mut pid = state.export_pid.lock().unwrap();
+    if let Some(p) = pid.take() {
+        kill_process(p);
+        let _ = app.emit("ml-export-done", -1);
+    }
     Ok(())
 }
 

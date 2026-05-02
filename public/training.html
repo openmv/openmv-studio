@@ -34,8 +34,10 @@
       text-overflow: ellipsis;
       min-width: 0;
     }
-    .toolbar-row #project-select { flex: 1; min-width: 120px; }
-    .toolbar-row #train-epochs { flex: 1; width: auto; min-width: 80px; }
+    .toolbar-row #project-select { flex: 1; min-width: 130px; }
+    .toolbar-row #train-model { min-width: 80px; flex-shrink: 0; }
+    .toolbar-row #train-imgsz { min-width: 32px; flex-shrink: 0; }
+    .toolbar-row #train-epochs { flex: 1; width: auto; min-width: 60px; }
     .toolbar-row button {
       padding: 3px 10px; border-radius: 4px;
       border: 1px solid #3a3a3f; background: #2a2a2f;
@@ -61,6 +63,42 @@
     .toolbar-row .spacer { width: 0; flex-shrink: 0; }
     .toolbar-row .epochs-val { color: #aaa; min-width: 22px; text-align: right; font-size: 11px; }
 
+    /* -- Menu button (Deploy) -- */
+    .menu-btn { position: relative; display: inline-block; }
+    .menu-btn > button::after {
+      content: "";
+      display: inline-block;
+      width: 0; height: 0;
+      margin-left: 6px;
+      vertical-align: 2px;
+      border-left: 3px solid transparent;
+      border-right: 3px solid transparent;
+      border-top: 3px solid currentColor;
+      opacity: 0.55;
+    }
+    .menu-list {
+      position: absolute;
+      top: calc(100% + 2px);
+      right: 0;
+      margin: 0; padding: 4px 0;
+      list-style: none;
+      background: #2a2a2f;
+      border: 1px solid #3a3a3f;
+      border-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      min-width: 220px;
+      z-index: 100;
+      font-size: 11px;
+    }
+    .menu-list[hidden] { display: none; }
+    .menu-list li {
+      padding: 5px 12px;
+      color: #ccc;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .menu-list li:hover { background: #1a2a3f; color: #6ab0ff; }
+
     /* -- Main layout -- */
     .main { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
 
@@ -68,8 +106,8 @@
     .editor-area {
       flex: 1; display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      position: relative; overflow: hidden;
-      background: #111114;
+      position: relative; overflow: auto;
+      background: #1e1e23;
       user-select: none; -webkit-user-select: none;
     }
     .editor-container {
@@ -89,6 +127,49 @@
       user-select: none; -webkit-user-select: none;
     }
     .no-selection {
+      color: #aaa; font-size: 12px; line-height: 1.55;
+      padding: 24px 32px;
+      max-width: 720px; margin: 0 auto;
+      align-self: stretch;
+    }
+    .no-selection h3 {
+      color: #eee; font-size: 13px; font-weight: 600;
+      margin: 18px 0 6px;
+      letter-spacing: 0.02em;
+    }
+    .no-selection h3:first-child {
+      margin-top: 0;
+    }
+    .no-selection p {
+      margin: 0 0 8px;
+      text-align: justify;
+    }
+    .no-selection ul {
+      margin: 4px 0 8px 18px; padding: 0;
+    }
+    .no-selection li {
+      margin: 3px 0;
+    }
+    .no-selection code {
+      font-family: 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      color: #d0d0d8;
+      background: #2a2a2f; padding: 1px 5px; border-radius: 3px;
+    }
+    .no-selection .key {
+      font-family: inherit; font-size: 11px;
+      color: #d0d0d8;
+      background: #2a2a2f; padding: 1px 7px; border-radius: 3px;
+      border: 1px solid #3a3a3f;
+      white-space: nowrap;
+    }
+    .no-selection .hint {
+      margin-top: 14px; padding: 10px 12px;
+      background: #1a2a3f; border-left: 3px solid #4a9eff;
+      color: #b8d0ee; border-radius: 3px;
+      font-size: 11px; line-height: 1.5;
+    }
+    .no-selection-text {
       color: #555; font-size: 14px;
       text-align: center; line-height: 1.6;
     }
@@ -309,6 +390,7 @@
     .u-title { color: #ccc; }
   </style>
   <script src="/libs/uplot/uPlot.iife.min.js"></script>
+  <script src="/connect-helper.js"></script>
 </head>
 <body>
   <!-- Toolbar: project + training -->
@@ -319,7 +401,6 @@
         <option value="__new__">-- new project --</option>
       </select>
       <button id="btn-delete-project" class="btn-danger" disabled>Delete</button>
-      <span class="spacer"></span>
       <span class="separator"></span>
       <label>Model:</label>
       <select id="train-model">
@@ -342,14 +423,87 @@
       <span class="spacer"></span>
       <button class="btn-accent" id="btn-train" disabled>Train</button>
       <button class="btn-stop-train" id="btn-stop-train" style="display:none">Stop</button>
-      <button class="btn-accent" id="btn-export" disabled>Export</button>
+      <span class="menu-btn">
+        <button class="btn-accent" id="btn-deploy" aria-haspopup="menu" aria-expanded="false" disabled>Deploy</button>
+        <ul class="menu-list" id="deploy-menu" role="menu" hidden>
+          <li role="menuitem" data-target="cpu">CPU</li>
+          <li role="menuitem" data-target="st-neural-art">ST Neural-ART</li>
+          <li role="menuitem" data-target="ethos-u55-256">Arm Ethos-U55 (256 MAC)</li>
+          <li role="menuitem" data-target="ethos-u55-128">Arm Ethos-U55 (128 MAC)</li>
+        </ul>
+      </span>
     </div>
   </div>
 
   <!-- Main area: editor + horizontal thumbnail strip -->
   <div class="main">
     <div class="editor-area" id="editor-area">
-      <span class="no-selection" id="no-selection">Select or create a project to begin</span>
+      <div class="no-selection" id="no-selection">
+        <div id="no-selection-tutorial">
+          <h3>Training</h3>
+          <p>
+            A training project bundles your dataset, class list, and trained
+            model in one folder. Pick an existing project from the dropdown,
+            or choose <code>-- new project --</code> to start a fresh one.
+            Projects are saved under the app data directory in
+            <code>training/&lt;project&gt;/</code>.
+          </p>
+
+          <h3>Buttons</h3>
+          <ul>
+            <li>
+              <strong>Delete</strong> -- remove the current project and all
+              its images.
+            </li>
+            <li>
+              <strong>Train</strong> -- run training with the selected model,
+              epochs, and image size; live metrics appear in place of the
+              editor.
+            </li>
+            <li>
+              <strong>Deploy</strong> -- convert the trained model to
+              <code>.tflite</code> (if needed), then for NPU targets
+              compile the quantized model for the chosen accelerator
+              (ST Neural-ART or Arm Ethos-U55) and flash it to the
+              connected board's ROMFS. The CPU target skips compilation
+              and flashes the <code>.tflite</code> as-is.
+            </li>
+            <li>
+              <strong>Add Images</strong> -- import photos from disk; drag
+              &amp; drop onto the window also works.
+            </li>
+            <li>
+              <strong>Auto-Annotate</strong> -- launch the annotation helper
+              to label boxes in the dataset.
+            </li>
+            <li>
+              <strong>Accept</strong> / <strong>Reject</strong> -- mark the
+              current image's annotation as reviewed; rejected images are
+              excluded from training.
+            </li>
+          </ul>
+
+          <h3>Tips</h3>
+          <ul>
+            <li>
+              The thumbnail strip shows annotation status: green for
+              accepted, red for rejected, grey for pending.
+            </li>
+            <li>
+              Image size must match the input layer of the deployed model;
+              <code>192</code> is a good default for YOLOv8n / YOLO11n.
+            </li>
+            <li>
+              Reading or writing the ROMFS partition can take a long time
+              depending on the partition size and link speed.
+            </li>
+            <li>
+              Press <span class="key">Esc</span> to close.
+            </li>
+          </ul>
+        </div>
+        <div class="no-selection-text" id="no-selection-text" style="display:none"></div>
+      </div>
       <div class="editor-container" id="editor-container" style="display:none">
         <img id="editor-img">
         <canvas id="editor-canvas"></canvas>
@@ -369,7 +523,7 @@
         <div class="metrics-chart" id="metrics-chart"></div>
       </div>
     </div>
-    <div class="thumb-strip" id="thumb-strip"></div>
+    <div class="thumb-strip" id="thumb-strip" style="display:none"></div>
   </div>
 
   <!-- Controls bar: annotation editing -->
@@ -423,7 +577,6 @@
     var invoke = window.__TAURI__.core.invoke;
     var convertFileSrc = window.__TAURI__.core.convertFileSrc;
     var dialogOpen = window.__TAURI__.dialog.open;
-    var dialogSave = window.__TAURI__.dialog.save;
     var getCurrentWebview = window.__TAURI__.webview.getCurrentWebview;
     var getCurrentWindow = window.__TAURI__.window.getCurrentWindow;
 
@@ -451,20 +604,59 @@
     var editorImg = document.getElementById("editor-img");
     var editorCanvas = document.getElementById("editor-canvas");
     var noSelection = document.getElementById("no-selection");
+    var noSelectionTutorial = document.getElementById("no-selection-tutorial");
+    var noSelectionText = document.getElementById("no-selection-text");
+
+    function showNoSelectionTutorial() {
+      noSelection.style.display = "";
+      noSelectionTutorial.style.display = "";
+      noSelectionText.style.display = "none";
+      noSelectionText.textContent = "";
+    }
+
+    function setNoSelectionMessage(msg) {
+      noSelection.style.display = "";
+      noSelectionTutorial.style.display = "none";
+      noSelectionText.style.display = "";
+      noSelectionText.textContent = msg;
+    }
     var classSelect = document.getElementById("class-select");
     var boxInfo = document.getElementById("box-info");
     var dropOverlay = document.getElementById("drop-overlay");
     var ctx = editorCanvas.getContext("2d");
 
-    // ========================================================================
-    // ESC to close window
-    // ========================================================================
+    var inBootloader = false;
+    var closing = false;
 
-    // Kill any running python subprocess (training, annotator) when the
-    // training window closes - otherwise they keep running detached.
-    getCurrentWindow().onCloseRequested(function() {
-      try { invoke("cmd_ml_stop_training"); } catch (e) {}
-      try { invoke("cmd_ml_stop_annotator"); } catch (e) {}
+    async function exitAndClose() {
+      if (closing) {
+        return;
+      }
+      closing = true;
+
+      try { await invoke("cmd_ml_stop_training"); } catch (e) {}
+      try { await invoke("cmd_ml_stop_annotator"); } catch (e) {}
+      try { await invoke("cmd_ml_stop_export"); } catch (e) {}
+
+      if (inBootloader) {
+        try {
+          document.getElementById("status-text").textContent = "Exiting DFU mode...";
+          await invoke("cmd_dfu_exit");
+          inBootloader = false;
+        } catch (err) {
+          document.getElementById("status-text").textContent = "DFU exit failed: " + err;
+        }
+      }
+
+      await getCurrentWindow().destroy();
+    }
+
+    getCurrentWindow().onCloseRequested(function(event) {
+      if (closing) {
+        return;
+      }
+      event.preventDefault();
+      exitAndClose();
     });
 
     document.addEventListener("keydown", function(e) {
@@ -489,7 +681,7 @@
           updateNavButtons();
           return;
         }
-        getCurrentWindow().close();
+        exitAndClose();
         return;
       }
 
@@ -532,10 +724,10 @@
         }
       }
       if (e.key === "a" || e.key === "A") {
-        setReviewStatus("accepted");
+        applyReviewStatus("accepted");
       }
       if (e.key === "r" || e.key === "R") {
-        setReviewStatus("rejected");
+        applyReviewStatus("rejected");
       }
     });
 
@@ -625,6 +817,7 @@
 
     function selectProject(name) {
       currentProject = name;
+      thumbStrip.style.display = "";
       invoke("cmd_ml_project_image_path", { project: name }).then(function(path) {
         imagePath = path;
         return invoke("cmd_ml_list_projects");
@@ -675,7 +868,7 @@
         document.getElementById("btn-annotate").disabled = false;
         document.getElementById("btn-delete-project").disabled = false;
         document.getElementById("btn-train").disabled = false;
-        document.getElementById("btn-export").disabled = !proj.has_trained_model;
+        document.getElementById("btn-deploy").disabled = !proj.has_trained_model;
         return loadAnnotations();
       }).catch(function(e) {
         console.error("Failed to select project:", e);
@@ -692,8 +885,8 @@
       selectedSet = {};
       imagePath = "";
       thumbStrip.innerHTML = "";
-      noSelection.style.display = "";
-      noSelection.textContent = "Select or create a project to begin";
+      thumbStrip.style.display = "none";
+      showNoSelectionTutorial();
       editorContainer.style.display = "none";
       document.getElementById("stats-bar").textContent = "";
       classSelect.innerHTML = "";
@@ -702,7 +895,7 @@
       document.getElementById("btn-annotate").disabled = true;
       document.getElementById("btn-delete-project").disabled = true;
       document.getElementById("btn-train").disabled = true;
-      document.getElementById("btn-export").disabled = true;
+      document.getElementById("btn-deploy").disabled = true;
       document.getElementById("btn-accept").disabled = true;
       document.getElementById("btn-reject").disabled = true;
       document.getElementById("btn-delete-images").disabled = true;
@@ -729,9 +922,9 @@
           updateStats();
           updateNavButtons();
           if (annotations.length > 0 && selectedIndex < 0) {
-            noSelection.textContent = "Select an image to review";
+            setNoSelectionMessage("Select an image to review");
           } else if (annotations.length === 0) {
-            noSelection.textContent = "Import or drop images to get started";
+            setNoSelectionMessage("Import or drop images to get started");
           }
         });
     }
@@ -956,7 +1149,7 @@
       training = true;
       document.getElementById("btn-train").style.display = "none";
       document.getElementById("btn-stop-train").style.display = "";
-      document.getElementById("btn-export").disabled = true;
+      document.getElementById("btn-deploy").disabled = true;
       document.getElementById("train-progress-track").style.display = "";
       document.getElementById("status-text").textContent = "Starting...";
       showMetricsPane();
@@ -1026,21 +1219,19 @@
       var code = event.payload;
       if (code === 0) {
         document.getElementById("status-text").textContent =
-          "Training complete. Click Export to convert to TFLite.";
+          "Training complete. Click Deploy to send the model to the board.";
       } else {
         document.getElementById("status-text").textContent =
           "Training stopped (code " + code + ")";
       }
       resetTrainUI();
-      // Enable Export only if a checkpoint actually got saved (full run, or
-      // a partial run that completed at least one epoch).
       if (currentProject) {
         invoke("cmd_ml_has_trained_model", { project: currentProject })
           .then(function(has) {
-            document.getElementById("btn-export").disabled = !has;
+            document.getElementById("btn-deploy").disabled = !has;
           })
           .catch(function() {
-            document.getElementById("btn-export").disabled = true;
+            document.getElementById("btn-deploy").disabled = true;
           });
       }
     });
@@ -1146,31 +1337,105 @@
     });
     metricsResizeObs.observe(metricsChart);
 
-    // -- Export (manual: triggered by Export button) --
-    document.getElementById("btn-export").addEventListener("click", function() {
-      if (!currentProject) {
+    // -- Deploy (export -> bootloader -> ROMFS) --
+    // The Deploy button is a menu-button: click opens a popup of targets;
+    // selecting a target kicks off the export pipeline, then on success
+    // chains into cmd_ml_deploy which handles bootloader + ROMFS write.
+    var deployInProgress = false;
+    var pendingDeployTarget = null;
+    var deployTotalBytes = 0;
+    var deployBtn = document.getElementById("btn-deploy");
+    var deployMenu = document.getElementById("deploy-menu");
+
+    function closeDeployMenu() {
+      deployMenu.hidden = true;
+      deployBtn.setAttribute("aria-expanded", "false");
+    }
+
+    function openDeployMenu() {
+      if (deployBtn.disabled) {
+        return;
+      }
+      deployMenu.hidden = false;
+      deployBtn.setAttribute("aria-expanded", "true");
+    }
+
+    deployBtn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      if (deployMenu.hidden) {
+        openDeployMenu();
+      } else {
+        closeDeployMenu();
+      }
+    });
+
+    document.addEventListener("click", function(e) {
+      if (!deployMenu.hidden && !deployMenu.contains(e.target) && e.target !== deployBtn) {
+        closeDeployMenu();
+      }
+    });
+
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape" && !deployMenu.hidden) {
+        closeDeployMenu();
+      }
+    });
+
+    deployMenu.addEventListener("click", function(e) {
+      var li = e.target.closest("li[data-target]");
+      if (!li) {
+        return;
+      }
+      closeDeployMenu();
+      startDeploy(li.getAttribute("data-target"));
+    });
+
+    function startDeploy(target) {
+      if (!currentProject || deployInProgress) {
         return;
       }
       var imgsz = parseInt(document.getElementById("train-imgsz").value);
-      document.getElementById("btn-export").disabled = true;
-      document.getElementById("status-text").textContent = "Exporting TFLite...";
+      deployBtn.disabled = true;
+      document.getElementById("btn-train").disabled = true;
+      document.getElementById("btn-delete-project").disabled = true;
+      deployInProgress = true;
+      pendingDeployTarget = target;
+      document.getElementById("status-text").textContent =
+        "Deploy: exporting for " + target + "...";
       invoke("cmd_ml_export", {
         project: currentProject,
         imgsz: imgsz,
+        target: target,
       }).catch(function(e) {
-        console.error("Failed to start export:", e);
-        document.getElementById("status-text").textContent = "Export error: " + e;
-        document.getElementById("btn-export").disabled = false;
+        console.error("Deploy failed:", e);
+        document.getElementById("status-text").textContent = "Deploy error: " + e;
+        finishDeploy();
       });
-    });
+    }
+
+    var ensureConnected = window.openmv.ensureConnected;
+
+    function finishDeploy() {
+      pendingDeployTarget = null;
+      deployInProgress = false;
+      deployTotalBytes = 0;
+      deployBtn.disabled = false;
+      document.getElementById("btn-train").disabled = false;
+      document.getElementById("btn-delete-project").disabled = false;
+      document.getElementById("train-progress-track").style.display = "none";
+      document.getElementById("train-progress-fill").style.width = "0%";
+    }
 
     listen("ml-export-progress", function(event) {
+      if (!pendingDeployTarget) {
+        return;
+      }
       var text = event.payload;
       try {
         var obj = JSON.parse(text);
         if (obj.status) {
           document.getElementById("status-text").textContent =
-            "Export: " + obj.status.replace(/_/g, " ");
+            "Deploy: " + obj.status.replace(/_/g, " ");
         }
       } catch (e) {
         // Raw log line
@@ -1178,48 +1443,77 @@
     });
 
     listen("ml-export-done", function(event) {
-      var code = event.payload;
-      document.getElementById("btn-export").disabled = false;
-      if (code === 0) {
-        document.getElementById("status-text").textContent =
-          "Export complete! Choose where to save the model.";
-        var imgsz = parseInt(document.getElementById("train-imgsz").value);
-        var sanitized = currentProject.replace(/[^a-zA-Z0-9_-]/g, "_");
-        var modelTag = currentProjectModel
-          ? "_" + currentProjectModel.replace(/[^a-zA-Z0-9_-]/g, "_")
-          : "";
-        var defaultName = sanitized + modelTag + "_" + imgsz + ".tflite";
-        dialogSave({
-          title: "Save model as...",
-          defaultPath: defaultName,
-          filters: [{ name: "TFLite", extensions: ["tflite"] }],
-        }).then(function(filePath) {
-          if (!filePath) {
-            document.getElementById("status-text").textContent =
-              "Export complete. model.tflite ready in project.";
-            return;
-          }
-          if (!/\.tflite$/i.test(filePath)) {
-            filePath = filePath + ".tflite";
-          }
-          return invoke("cmd_ml_save_export", {
-            project: currentProject,
-            destPath: filePath,
-          });
-        }).then(function(path) {
-          if (path) {
-            document.getElementById("status-text").textContent =
-              "Saved: " + path;
-          }
-        }).catch(function(e) {
-          console.error("Failed to save export:", e);
-          document.getElementById("status-text").textContent =
-            "Save failed: " + e;
-        });
-      } else {
-        document.getElementById("status-text").textContent =
-          "Export failed (code " + code + ")";
+      if (!pendingDeployTarget) {
+        return;
       }
+      var code = event.payload;
+      if (code !== 0) {
+        document.getElementById("status-text").textContent =
+          "Deploy: export failed (code " + code + ")";
+        finishDeploy();
+        return;
+      }
+      var target = pendingDeployTarget;
+      document.getElementById("status-text").textContent =
+        "Deploy: connecting to board...";
+      ensureConnected().then(function(ok) {
+        if (!ok) {
+          document.getElementById("status-text").textContent =
+            "Deploy error: no board found";
+          finishDeploy();
+          return;
+        }
+        document.getElementById("status-text").textContent =
+          "Deploy: writing to board (target: " + target + ")...";
+        inBootloader = true;
+        return invoke("cmd_ml_deploy", {
+          project: currentProject,
+          target: target,
+        }).then(function() {
+          inBootloader = false;
+          document.getElementById("status-text").textContent =
+            "Deploy complete. Board reset.";
+        });
+      }).catch(function(e) {
+        console.error("Deploy failed:", e);
+        document.getElementById("status-text").textContent = "Deploy failed: " + e;
+      }).finally(function() {
+        finishDeploy();
+      });
+    });
+
+    // dfu-status carries two payload types during Deploy:
+    //   string  -- high-level stage label ("Entering bootloader...", etc.)
+    //   number  -- byte count from a dfu-util progress tick; drives the
+    //              progress bar without overwriting the stage text.
+    // dfu-total announces the partition size before each upload/download so
+    // the bar can compute a percentage.
+    listen("dfu-status", function(event) {
+      if (!deployInProgress) {
+        return;
+      }
+      if (typeof event.payload === "string") {
+        document.getElementById("status-text").textContent =
+          "Deploy: " + event.payload;
+      } else if (typeof event.payload === "number" && deployTotalBytes > 0) {
+        var pct = Math.min(100, (event.payload / deployTotalBytes) * 100);
+        document.getElementById("train-progress-fill").style.width =
+          pct.toFixed(1) + "%";
+      }
+    });
+
+    listen("dfu-total", function(event) {
+      if (!deployInProgress) {
+        return;
+      }
+      deployTotalBytes = event.payload;
+      var track = document.getElementById("train-progress-track");
+      var fill = document.getElementById("train-progress-fill");
+      fill.style.transition = "none";
+      fill.style.width = "0%";
+      track.style.display = "";
+      void fill.offsetWidth;
+      fill.style.transition = "";
     });
 
     // ========================================================================
@@ -1347,8 +1641,7 @@
         if (annotations.length === 0) {
           selectedIndex = -1;
           boxes = [];
-          noSelection.style.display = "";
-          noSelection.textContent = "Select an image to review";
+          setNoSelectionMessage("Select an image to review");
           editorContainer.style.display = "none";
           renderThumbnails();
         } else {
@@ -1721,7 +2014,6 @@
       var hit = hitTestBoxes(pos.x, pos.y);
       if (hit >= 0) {
         selectedBox = hit;
-        classSelect.value = boxes[hit].classId;
         var b = boxes[hit];
         dragMode = "move";
         dragOrigin = {
@@ -1902,7 +2194,13 @@
         effective.push(targets[i]);
       }
 
+      // For a single already-accepted image, treat Accept as "advance".
+      var singleSelection =
+        targets.length === 1 && Object.keys(selectedSet).length === 0;
       if (effective.length === 0) {
+        if (status === "accepted" && singleSelection) {
+          advanceToNextPending();
+        }
         return;
       }
 
@@ -1945,23 +2243,21 @@
       updateNavButtons();
 
       if (advance) {
-        // Find the next image that still needs review (not accepted, not rejected).
-        // Search forward first, then wrap to the start.
-        var n = annotations.length;
-        var nextIdx = -1;
-        for (var s = 1; s <= n; s++) {
-          var probe = (selectedIndex + s) % n;
-          if (probe === selectedIndex) {
-            break;
-          }
-          var st = annotations[probe].status;
-          if (st !== "accepted" && st !== "rejected") {
-            nextIdx = probe;
-            break;
-          }
+        advanceToNextPending();
+      }
+    }
+
+    function advanceToNextPending() {
+      var n = annotations.length;
+      for (var s = 1; s <= n; s++) {
+        var probe = (selectedIndex + s) % n;
+        if (probe === selectedIndex) {
+          return;
         }
-        if (nextIdx >= 0) {
-          selectImage(nextIdx);
+        var st = annotations[probe].status;
+        if (st !== "accepted" && st !== "rejected") {
+          selectImage(probe);
+          return;
         }
       }
     }
