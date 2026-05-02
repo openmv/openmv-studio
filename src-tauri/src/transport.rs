@@ -106,7 +106,7 @@ impl Transport {
         let caps = backend.caps();
         Ok(Self {
             backend: Some(backend),
-            timeout: Duration::from_millis(5000),
+            timeout: Duration::from_millis(1000),
             sequence: 0,
             state: TransportState::Sync,
             plength: 0,
@@ -125,6 +125,17 @@ impl Transport {
         self.buf.clear();
         self.pos = 0;
         self.state = TransportState::Sync;
+        Ok(())
+    }
+
+    pub fn reset_state(&mut self) -> Result<(), TransportError> {
+        if let Some(ref mut backend) = self.backend {
+            backend.reset()?;
+        }
+        self.buf.clear();
+        self.pos = 0;
+        self.state = TransportState::Sync;
+        self.events.clear();
         Ok(())
     }
 
@@ -238,24 +249,28 @@ impl Transport {
             return Err(TransportError::NotConnected);
         }
         let mut fragments: Vec<u8> = Vec::new();
-        let mut deadline = Instant::now() + timeout.unwrap_or(self.timeout);
+        let idle = timeout.unwrap_or(self.timeout);
+        let mut deadline = Instant::now() + idle;
 
         loop {
             if Instant::now() >= deadline {
-                let elapsed = timeout.unwrap_or(self.timeout);
-                if elapsed.as_millis() > 10 {
+                if idle.as_millis() > 10 {
                     log::warn!(
-                        "recv_packet: timeout after {:?}, buf={} bytes, fragments={}",
-                        elapsed, self.available(), fragments.len()
+                        "recv_packet: idle timeout after {:?}, buf={} bytes, fragments={}",
+                        idle, self.available(), fragments.len()
                     );
                 }
                 return Err(TransportError::Timeout);
             }
 
-            // Read all available data from backend
+            // Read all available data from backend; reset deadline on any progress.
+            let before = self.buf.len();
             match &mut self.backend {
                 Some(backend) => backend.read(&mut self.buf)?,
                 None => return Err(TransportError::NotConnected),
+            }
+            if self.buf.len() != before {
+                deadline = Instant::now() + idle;
             }
 
             // Run state machine
@@ -305,7 +320,8 @@ impl Transport {
             // Advance sequence
             self.sequence = self.sequence.wrapping_add(1);
 
-            // Collect fragments - reset deadline per fragment, cap at 10MB
+            // Collect fragments, cap at 10MB. Deadline already resets on
+            // backend progress, so no separate per-fragment reset needed.
             if packet.flags.contains(PacketFlags::FRAGMENT) {
                 if packet.length > 0 {
                     let p = packet.payload.as_ref().unwrap();
@@ -316,7 +332,6 @@ impl Transport {
                     }
                     fragments.extend_from_slice(p);
                 }
-                deadline = Instant::now() + self.timeout;
                 continue;
             }
 

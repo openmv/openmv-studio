@@ -132,6 +132,7 @@ impl Camera {
     pub fn connect(&mut self, address: &str, transport: &str) -> Result<(), TransportError> {
         self.disconnect();
         self.transport = Some(Transport::new(address, transport, MIN_PAYLOAD_SIZE)?);
+        self.transport()?.open()?;
         self.resync()?;
         self.update_channels()?;
         Ok(())
@@ -150,7 +151,7 @@ impl Camera {
 
     fn resync(&mut self) -> Result<(), TransportError> {
         let t = self.transport()?;
-        t.open()?;
+        t.reset_state()?;
         t.reset_caps();
         t.reset_sequence();
 
@@ -192,19 +193,27 @@ impl Camera {
                 Ok(self.transport()?.recv_packet(None)?.payload)
             })();
 
-            match &result {
+            match result {
                 Err(e) if e.is_recoverable() && resync && attempt == 0 => {
                     log::warn!("send_cmd({:?}): {}, resyncing...", opcode, e);
-                    self.resync()?;
+                    if let Err(re) = self.resync() {
+                        return Err(TransportError::IoError(format!(
+                            "Connection lost: resync failed: {}",
+                            re
+                        )));
+                    }
                     if !retry {
-                        return result;
+                        return Err(e);
                     }
                     log::info!("send_cmd({:?}): resync ok, retrying", opcode);
                 }
-                _ => return result,
+                other => return other,
             }
         }
-        Err(TransportError::Timeout)
+        Err(TransportError::IoError(format!(
+            "Connection lost: send_cmd({:?}) failed after resync",
+            opcode
+        )))
     }
 
     fn negotiate_caps(&mut self) -> Result<(), TransportError> {

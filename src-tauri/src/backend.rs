@@ -14,6 +14,7 @@ pub trait Backend: Send {
     fn caps(&self) -> TransportCaps;
     fn open(&mut self) -> Result<(), TransportError>;
     fn close(&mut self);
+    fn reset(&mut self) -> Result<(), TransportError>;
     fn read(&mut self, buf: &mut Vec<u8>) -> Result<(), TransportError>;
     fn write(&mut self, data: &[u8]) -> Result<(), TransportError>;
     fn is_connected(&self) -> bool;
@@ -51,7 +52,6 @@ impl Backend for SerialBackend {
         let _ = port.clear(serialport::ClearBuffer::All);
         std::thread::sleep(Duration::from_millis(100));
         let _ = port.clear(serialport::ClearBuffer::All);
-        // Short timeout for non-blocking reads
         let _ = port.set_timeout(Duration::from_micros(100));
         self.port = Some(port);
         Ok(())
@@ -59,9 +59,15 @@ impl Backend for SerialBackend {
 
     fn close(&mut self) {
         if let Some(ref mut port) = self.port {
-            let _ = port.flush();
+            let _ = port.clear(serialport::ClearBuffer::All);
         }
         self.port = None;
+    }
+
+    fn reset(&mut self) -> Result<(), TransportError> {
+        let port = self.port.as_mut().ok_or(TransportError::NotConnected)?;
+        port.clear(serialport::ClearBuffer::All)
+            .map_err(|e| TransportError::IoError(e.to_string()))
     }
 
     /// Blocking read with a short timeout. bytes_to_read()
@@ -152,6 +158,10 @@ impl Backend for NetworkBackend {
 
     fn close(&mut self) {
         self.socket = None;
+    }
+
+    fn reset(&mut self) -> Result<(), TransportError> {
+        Ok(())
     }
 
     fn read(&mut self, buf: &mut Vec<u8>) -> Result<(), TransportError> {
