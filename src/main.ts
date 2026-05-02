@@ -9,7 +9,7 @@
 
 import * as monaco from "monaco-editor";
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { state, scheduleSaveSettings, dialogWindowSize } from "./state";
@@ -69,6 +69,7 @@ import {
 import { initSettings, loadSettings, setUiScale, openSettings } from "./settings";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { openPinoutViewer } from "./pinout";
+import { openRomfsEditor } from "./romfs-editor";
 import { openResourceWindow, type ResourceStatus } from "./resources";
 import { message as dialogMessage } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -369,6 +370,7 @@ const runStopLabel = btnRunStop.querySelector(".run-stop-label") as HTMLElement;
 
 function setConnected(connected: boolean, info: string = "Disconnected") {
   state.isConnected = connected;
+  emit("connection-changed", { connected });
 
   const dot = document.querySelector(".status-dot") as HTMLElement;
   const label = document.getElementById("status-board");
@@ -1253,6 +1255,13 @@ document.getElementById("status-updates")?.addEventListener("click", async () =>
   }
 });
 
+listen("request-connect", async () => {
+  if (!state.isConnected) {
+    await doConnect();
+  }
+  emit("connection-changed", { connected: state.isConnected });
+});
+
 listen("channel-changed", () => {
   invoke<ResourceStatus[]>("cmd_fetch_manifest", {
     channel: state.resourceChannel,
@@ -1444,6 +1453,9 @@ listen<string>("menu-action", (event) => {
       break;
     case "pinout-viewer":
       openPinoutViewer();
+      break;
+    case "romfs-editor":
+      openRomfsEditor();
       break;
     case "docs":
       invoke("cmd_open_url", { url: "https://docs.openmv.io/" });

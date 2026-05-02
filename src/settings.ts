@@ -45,6 +45,11 @@ let store: Store | null = null;
 let saveTimer: number | null = null;
 let applyThemeFn: (setting: ThemeSetting) => void;
 
+const CHILD_WINDOW_LABELS = [
+  "training", "pinout", "settings", "resources",
+  "about", "dfu-progress", "romfs-editor",
+];
+
 async function getStore(): Promise<Store> {
   if (!store) {
     store = await Store.load("settings.json");
@@ -71,10 +76,6 @@ export function initSettings(
     .getElementById("btn-settings")
     ?.addEventListener("click", () => openSettings());
 }
-
-const CHILD_WINDOW_LABELS = [
-  "training", "pinout", "settings", "resources", "about", "dfu-progress",
-];
 
 export function setUiScale(scale: number) {
   state.uiScale = Math.max(0.5, Math.min(2.0, scale));

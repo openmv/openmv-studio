@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ROMFS Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1e1e23; color: #ccc;
+      display: flex; flex-direction: column;
+      height: 100vh; overflow: hidden;
+      user-select: none;
+      font-size: 12px;
+    }
+
+    .toolbar {
+      background: #161619; border-bottom: 1px solid #2a2a2f;
+      padding: 6px 10px; display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .toolbar select, .toolbar button {
+      padding: 3px 10px; font-size: 11px;
+      background: #2a2a2f; color: #ccc;
+      border: 1px solid #3a3a3f; border-radius: 4px;
+      height: 24px;
+    }
+    .toolbar button { cursor: pointer; }
+    .toolbar button:hover:not(:disabled) { background: #333; }
+    .toolbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .toolbar .spacer { flex: 1; }
+    .toolbar .part-label {
+      font-size: 11px; color: #888;
+    }
+
+    .footer {
+      background: #161619; border-top: 1px solid #2a2a2f;
+      padding: 8px 12px; display: flex; align-items: center;
+      justify-content: flex-end; gap: 8px;
+      flex-shrink: 0;
+    }
+    .footer button {
+      padding: 5px 18px; font-size: 11px;
+      background: #2a2a2f; color: #ccc;
+      border: 1px solid #3a3a3f; border-radius: 4px;
+      height: 26px;
+      cursor: pointer;
+    }
+    .footer button:hover:not(:disabled) { background: #333; }
+    .footer button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .footer button.primary {
+      background: #4a9eff; border-color: #4a9eff; color: #fff;
+    }
+    .footer button.primary:hover:not(:disabled) {
+      background: #3a8eef; border-color: #3a8eef;
+    }
+    .footer button.primary:disabled {
+      background: #2a4a6f; border-color: #2a4a6f; color: #ccc;
+    }
+
+    .files-area {
+      display: flex; flex-direction: column;
+      flex: 1; min-height: 0;
+    }
+
+    .capacity-track {
+      flex: 1; min-width: 80px; height: 4px;
+      background: #2a2a2f; border-radius: 2px;
+      overflow: hidden;
+    }
+    .capacity-fill {
+      height: 100%; background: #4a9eff;
+      transition: width 0.15s, background 0.15s;
+      border-radius: 2px;
+    }
+    .capacity-fill.over {
+      background: #f07070;
+    }
+    .capacity-text {
+      font-size: 10px; color: #777;
+      display: inline-flex; gap: 8px;
+    }
+    .capacity-text .over-msg {
+      color: #f07070; font-weight: 600;
+    }
+
+    .list-area {
+      flex: 1; overflow-y: auto; position: relative;
+      padding: 4px 0;
+      min-height: 0;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 80px 110px 60px;
+      gap: 8px;
+      padding: 6px 12px;
+      align-items: center;
+      border-bottom: 1px solid #25252a;
+      cursor: default;
+    }
+    .row:hover { background: #232328; }
+    .row.deleted {
+      background: #3a1010;
+      border: 1px solid #f07070;
+      border-radius: 3px;
+      margin: 2px 8px;
+      padding: 5px 11px;
+    }
+    .row.deleted .name {
+      text-decoration: line-through;
+      color: #888;
+    }
+    .row .name {
+      font-family: 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .row .size, .row .source {
+      color: #888; font-size: 11px;
+    }
+    .row .source.local { color: #4a9eff; }
+    .row .source.device { color: #888; }
+    .row select.alignment {
+      padding: 2px 4px; font-size: 11px;
+      background: #2a2a2f; color: #ccc;
+      border: 1px solid #3a3a3f; border-radius: 3px;
+      height: 22px; width: 100%;
+    }
+    .empty {
+      padding: 24px 32px;
+      color: #aaa; font-size: 12px; line-height: 1.55;
+      max-width: 720px; margin: 0 auto;
+    }
+    .empty h3 {
+      color: #eee; font-size: 13px; font-weight: 600;
+      margin: 18px 0 6px;
+      letter-spacing: 0.02em;
+    }
+    .empty h3:first-child {
+      margin-top: 0;
+    }
+    .empty p {
+      margin: 0 0 8px;
+      text-align: justify;
+    }
+    .empty ul {
+      margin: 4px 0 8px 18px; padding: 0;
+    }
+    .empty li {
+      margin: 3px 0;
+    }
+    .empty code {
+      font-family: 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      color: #d0d0d8;
+      background: #2a2a2f; padding: 1px 5px; border-radius: 3px;
+    }
+    .empty .key {
+      font-family: inherit; font-size: 11px;
+      color: #d0d0d8;
+      background: #2a2a2f; padding: 1px 7px; border-radius: 3px;
+      border: 1px solid #3a3a3f;
+      white-space: nowrap;
+    }
+    .empty .hint {
+      margin-top: 14px; padding: 10px 12px;
+      background: #1a2a3f; border-left: 3px solid #4a9eff;
+      color: #b8d0ee; border-radius: 3px;
+      font-size: 11px; line-height: 1.5;
+    }
+    .empty a {
+      color: #6ab0ff; text-decoration: none;
+    }
+    .empty a:hover { text-decoration: underline; }
+    .header-row {
+      display: grid;
+      grid-template-columns: 1fr 80px 110px 60px;
+      gap: 8px;
+      padding: 4px 12px;
+      font-size: 10px; color: #666;
+      text-transform: uppercase;
+      border-bottom: 1px solid #2a2a2f;
+      background: #161619;
+    }
+
+    .drop-overlay {
+      position: fixed; inset: 0;
+      background: rgba(74, 158, 255, 0.15);
+      border: 3px dashed #4a9eff;
+      pointer-events: none;
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    .drop-overlay.visible { display: flex; }
+    .drop-label {
+      font-size: 16px; color: #4a9eff;
+      background: #1e1e23; padding: 12px 24px;
+      border-radius: 6px; border: 1px solid #4a9eff;
+    }
+
+    .ctx-menu {
+      position: fixed; z-index: 1001;
+      background: #2a2a2f; border: 1px solid #3a3a3f;
+      border-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      min-width: 120px;
+      padding: 4px 0;
+      display: none;
+    }
+    .ctx-menu.visible { display: block; }
+    .ctx-menu-item {
+      padding: 6px 14px; font-size: 11px; cursor: pointer;
+      color: #ccc;
+    }
+    .ctx-menu-item:hover { background: #3a3a3f; }
+    .ctx-menu-item.danger { color: #f07070; }
+
+    .status-bar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 4px 12px;
+      background: #1a1a1e; border-top: 1px solid #2a2a2f;
+      font-size: 11px;
+      flex-shrink: 0;
+      min-height: 24px;
+    }
+    .status-bar .status-left {
+      display: flex; align-items: center; gap: 8px;
+      flex: 1; min-width: 0;
+    }
+    .status-bar .status-right {
+      display: flex; align-items: center; gap: 8px;
+      width: 280px; flex-shrink: 0;
+    }
+    .status-bar .status-right .capacity-text {
+      flex-shrink: 0; white-space: nowrap;
+    }
+    .status-bar .status-text { color: #aaa; flex-shrink: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status-bar.error .status-text { color: #f07070; }
+    .status-bar.success .status-text { color: #6ab070; }
+    .status-bar .progress-track {
+      flex: 1; min-width: 80px; height: 4px;
+      background: #2a2a2f; border-radius: 2px;
+      overflow: hidden;
+    }
+    .status-bar .progress-fill {
+      height: 100%; background: #4a9eff; border-radius: 2px;
+      transition: width 0.3s;
+    }
+
+    .toast {
+      position: fixed; bottom: 30px; left: 50%;
+      transform: translateX(-50%);
+      background: #c62828; color: #fff;
+      padding: 8px 16px; border-radius: 4px;
+      font-size: 11px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      z-index: 2000;
+      display: none;
+    }
+    .toast.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <label class="part-label">Partition:</label>
+    <select id="partition-select"><option value="-1">none</option></select>
+    <span class="spacer"></span>
+    <button id="btn-add">Add Files...</button>
+    <button id="btn-stock">Stock</button>
+    <button id="btn-read">Read Device</button>
+  </div>
+
+  <div class="files-area">
+    <div class="header-row">
+      <span>Name</span>
+      <span>Size</span>
+      <span>Alignment</span>
+      <span>Source</span>
+    </div>
+
+    <div class="list-area" id="list-area">
+      <div class="empty" id="empty-msg">
+        <h3>ROMFS</h3>
+        <p>
+          ROMFS is a read-only filesystem flashed alongside the firmware and
+          mounted at <code>/rom</code>. It holds AI models, label maps, and
+          other assets, which the firmware reads directly from flash without
+          copying them into RAM.
+        </p>
+
+        <h3>Buttons</h3>
+        <ul>
+          <li>
+            <strong>Read Device</strong> -- pull the image currently flashed
+            on the board.
+          </li>
+          <li>
+            <strong>Stock</strong> -- load the factory image bundled with
+            the installed firmware.
+          </li>
+          <li>
+            <strong>Add Files...</strong> -- stage local files (drag &amp;
+            drop also works).
+          </li>
+          <li>
+            <strong>Write to Device</strong> -- flash the current entries
+            and reset the board.
+          </li>
+        </ul>
+
+        <h3>Tips</h3>
+        <ul>
+          <li>
+            Right-click a row to mark it for deletion; right-click again to
+            restore.
+          </li>
+          <li>
+            <code>.tflite</code> defaults to 16-byte alignment; other files
+            to 4. Adjust per row if a model needs more.
+          </li>
+          <li>
+            The bar in the status footer tracks used vs. total partition
+            size; writes are blocked when over.
+          </li>
+          <li>
+            Reading or writing the partition can take a long time
+            depending on the partition size and link speed.
+          </li>
+          <li>
+            Press <span class="key">Esc</span> to close.
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar" id="status-bar">
+    <div class="status-left">
+      <span class="status-text" id="status-text">Idle.</span>
+      <div class="progress-track" id="progress-track" style="display:none">
+        <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+    </div>
+    <div class="status-right">
+      <span class="capacity-text">
+        <span id="cap-text">0 B / 0 B (0%)</span>
+        <span class="over-msg" id="cap-over" style="display:none">Exceeds partition size</span>
+      </span>
+      <div class="capacity-track">
+        <div class="capacity-fill" id="cap-fill" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button id="btn-cancel">Cancel</button>
+    <button class="primary" id="btn-write" disabled>Write to Device</button>
+  </div>
+
+  <div class="drop-overlay" id="drop-overlay">
+    <div class="drop-label">Drop files to add to ROMFS</div>
+  </div>
+
+  <div class="ctx-menu" id="ctx-menu">
+    <div class="ctx-menu-item danger" id="ctx-delete">Delete</div>
+    <div class="ctx-menu-item" id="ctx-restore" style="display:none">Restore</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/connect-helper.js"></script>
+  <script>
+    var listen = window.__TAURI__.event.listen;
+    var invoke = window.__TAURI__.core.invoke;
+    var getCurrentWebview = window.__TAURI__.webview.getCurrentWebview;
+    var getCurrentWindow = window.__TAURI__.window.getCurrentWindow;
+    var dialogOpen = window.__TAURI__.dialog.open;
+
+    var ROMFS_HEADER = 0x14a6b1;
+    var ROMFS_HEADER_ALIGN = 16;
+    var ROMFS_FILEREC_ALIGN = 8;
+    var ALIGN_OPTIONS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384];
+
+    var partitions = [];
+    var currentPartIdx = 0;
+    // Per-partition state: partitionState[i] = { entries, totalBytes, loaded }.
+    // entries / totalBytes below are views into the active partition's slot;
+    // we keep them in sync so all the existing rendering code keeps working.
+    var partitionState = [];
+    var entries = [];
+    var totalBytes = 0;
+    var dfuOpBytes = 0;
+    var inBootloader = false;
+    var closing = false;
+
+    function activePartition() {
+      return partitionState[currentPartIdx];
+    }
+    function loadActivePartition() {
+      var s = activePartition();
+      entries = s ? s.entries : [];
+      totalBytes = s ? s.totalBytes : 0;
+    }
+    function syncActivePartition() {
+      var s = activePartition();
+      if (s) {
+        s.entries = entries;
+        s.totalBytes = totalBytes;
+      }
+    }
+
+    var listArea = document.getElementById("list-area");
+    var emptyMsg = document.getElementById("empty-msg");
+    var capFill = document.getElementById("cap-fill");
+    var capText = document.getElementById("cap-text");
+    var capOver = document.getElementById("cap-over");
+    var btnRead = document.getElementById("btn-read");
+    var btnWrite = document.getElementById("btn-write");
+    var btnAdd = document.getElementById("btn-add");
+    var btnStock = document.getElementById("btn-stock");
+    var btnCancel = document.getElementById("btn-cancel");
+    var partSelect = document.getElementById("partition-select");
+    var statusBar = document.getElementById("status-bar");
+    var statusText = document.getElementById("status-text");
+    var progressTrack = document.getElementById("progress-track");
+    var progressFill = document.getElementById("progress-fill");
+    var statsText = document.getElementById("stats-text");
+    var dropOverlay = document.getElementById("drop-overlay");
+    var ctxMenu = document.getElementById("ctx-menu");
+    var ctxDelete = document.getElementById("ctx-delete");
+    var ctxRestore = document.getElementById("ctx-restore");
+    var toast = document.getElementById("toast");
+    var ctxTargetIdx = -1;
+
+    function vintLen(v) {
+      var n = 1;
+      v = Math.floor(v / 128);
+      while (v != 0) { n++; v = Math.floor(v / 128); }
+      return n;
+    }
+
+    function encodedRecordLen(kind, payloadLen, align, offset) {
+      var kindLen = kind == 0 ? 0 : vintLen(kind);
+      var lenLen = vintLen(payloadLen);
+      var padding = 0;
+      if (align != 0) {
+        var preambleOff = offset + kindLen + lenLen;
+        padding = ((preambleOff + (align - 1)) & ~(align - 1)) - preambleOff;
+      }
+      return kindLen + padding + lenLen + payloadLen;
+    }
+
+    function encodedFileLen(name, dataLen, align, offset) {
+      var nameLen = name.length;
+      var nameRecLen = encodedRecordLen(0, nameLen, 0, 0);
+      var dataOffset = offset + 1 + (ROMFS_FILEREC_ALIGN - 1) + nameRecLen;
+      var dataRecLen = encodedRecordLen(2, dataLen, align, dataOffset);
+      return encodedRecordLen(5, nameRecLen + dataRecLen, ROMFS_FILEREC_ALIGN, 0);
+    }
+
+    function estimateRomfsSize(items) {
+      var bodyLen = 0;
+      var offset = ROMFS_HEADER_ALIGN;
+      for (var i = 0; i < items.length; i++) {
+        var e = items[i];
+        if (e.deleted) continue;
+        var recLen = encodedFileLen(e.name, e.size, e.alignment, offset);
+        offset += recLen;
+        bodyLen += recLen;
+      }
+      return encodedRecordLen(ROMFS_HEADER, bodyLen, ROMFS_HEADER_ALIGN, 0);
+    }
+
+    function formatBytes(n) {
+      if (n >= 1024 * 1024) return (n / 1048576).toFixed(2) + " MiB";
+      if (n >= 1024) return (n / 1024).toFixed(1) + " KiB";
+      return n + " B";
+    }
+
+    function setStatus(msg, kind) {
+      statusText.textContent = msg;
+      statusBar.className = "status-bar" + (kind ? " " + kind : "");
+    }
+
+    function showProgress(visible) {
+      progressTrack.style.display = visible ? "" : "none";
+      if (!visible) {
+        progressFill.style.width = "0%";
+      }
+    }
+    function updateProgressFromBytes(bytes) {
+      progressTrack.style.display = "";
+      var denom = dfuOpBytes > 0 ? dfuOpBytes : totalBytes;
+      if (denom > 0) {
+        var pct = Math.min(100, (bytes / denom) * 100);
+        progressFill.style.width = pct.toFixed(1) + "%";
+      }
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add("visible");
+      setTimeout(function() { toast.classList.remove("visible"); }, 3000);
+    }
+
+    function defaultAlignmentFor(name) {
+      var lower = name.toLowerCase();
+      if (lower.endsWith(".tflite")) return 16;
+      return 4;
+    }
+
+    function updateCapacity() {
+      var used = estimateRomfsSize(entries);
+      var pct = totalBytes > 0 ? (used / totalBytes) * 100 : 0;
+      capFill.style.width = Math.min(100, pct) + "%";
+      capText.textContent =
+        formatBytes(used) + " / " + formatBytes(totalBytes) +
+        " (" + pct.toFixed(1) + "%)";
+      var over = totalBytes > 0 && used > totalBytes;
+      capFill.classList.toggle("over", over);
+      capOver.style.display = over ? "" : "none";
+      // Write enabled only if there's at least one non-deleted entry,
+      // size fits, and we have a partition.
+      var anyKept = entries.some(function(e) { return !e.deleted; });
+      btnWrite.disabled = !partitions.length || over || !anyKept;
+      return used;
+    }
+
+    function rowMarkup(idx, e) {
+      var alignCell;
+      if (e.source === "device") {
+        alignCell = '<span></span>';
+      } else {
+        alignCell = '<select class="alignment" data-idx="' + idx + '">';
+        for (var i = 0; i < ALIGN_OPTIONS.length; i++) {
+          var v = ALIGN_OPTIONS[i];
+          alignCell += '<option value="' + v + '"' +
+            (v === e.alignment ? ' selected' : '') + '>' + v + '</option>';
+        }
+        alignCell += '</select>';
+      }
+      var srcCls = e.source === "device" ? "device" : "local";
+      return '<span class="name">' + escapeHtml(e.name) + '</span>' +
+        '<span class="size">' + formatBytes(e.size) + '</span>' +
+        alignCell +
+        '<span class="source ' + srcCls + '">' + e.source + '</span>';
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, function(c) {
+        return ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c];
+      });
+    }
+
+    function render() {
+      if (entries.length === 0) {
+        emptyMsg.style.display = "";
+        listArea.innerHTML = "";
+        listArea.appendChild(emptyMsg);
+        updateCapacity();
+        return;
+      }
+      emptyMsg.style.display = "none";
+      var html = "";
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var cls = "row" + (e.deleted ? " deleted" : "");
+        html += '<div class="' + cls + '" data-idx="' + i + '">' +
+          rowMarkup(i, e) + '</div>';
+      }
+      listArea.innerHTML = html;
+      // Bind alignment selects
+      var sels = listArea.querySelectorAll("select.alignment");
+      for (var j = 0; j < sels.length; j++) {
+        sels[j].addEventListener("change", onAlignmentChange);
+        sels[j].addEventListener("click", function(ev) { ev.stopPropagation(); });
+      }
+      // Bind right-click on rows
+      var rows = listArea.querySelectorAll(".row");
+      for (var k = 0; k < rows.length; k++) {
+        rows[k].addEventListener("contextmenu", onRowContextMenu);
+      }
+      updateCapacity();
+    }
+
+    function onAlignmentChange(ev) {
+      var idx = parseInt(ev.target.getAttribute("data-idx"), 10);
+      entries[idx].alignment = parseInt(ev.target.value, 10);
+      updateCapacity();
+    }
+
+    function onRowContextMenu(ev) {
+      ev.preventDefault();
+      ctxTargetIdx = parseInt(ev.currentTarget.getAttribute("data-idx"), 10);
+      var deleted = entries[ctxTargetIdx].deleted;
+      ctxDelete.style.display = deleted ? "none" : "";
+      ctxRestore.style.display = deleted ? "" : "none";
+      ctxMenu.style.left = ev.clientX + "px";
+      ctxMenu.style.top = ev.clientY + "px";
+      ctxMenu.classList.add("visible");
+    }
+
+    function hideContextMenu() {
+      ctxMenu.classList.remove("visible");
+      ctxTargetIdx = -1;
+    }
+
+    ctxDelete.addEventListener("click", function() {
+      if (ctxTargetIdx < 0) return;
+      var e = entries[ctxTargetIdx];
+      if (e.source === "local") {
+        // Remove outright
+        entries.splice(ctxTargetIdx, 1);
+      } else {
+        e.deleted = true;
+      }
+      hideContextMenu();
+      render();
+    });
+
+    ctxRestore.addEventListener("click", function() {
+      if (ctxTargetIdx < 0) return;
+      entries[ctxTargetIdx].deleted = false;
+      hideContextMenu();
+      render();
+    });
+
+    document.addEventListener("click", function() { hideContextMenu(); });
+    document.addEventListener("scroll", function() { hideContextMenu(); }, true);
+
+    function tryAddFile(name, dataArray) {
+      var trial = entries.slice();
+      // Replace any existing entry with the same name (deleted or not).
+      var existingIdx = -1;
+      for (var i = 0; i < trial.length; i++) {
+        if (trial[i].name === name) {
+          existingIdx = i;
+          break;
+        }
+      }
+      var alignment = existingIdx >= 0
+        ? trial[existingIdx].alignment
+        : defaultAlignmentFor(name);
+      var newEntry = {
+        name: name,
+        size: dataArray.length,
+        alignment: alignment,
+        data: dataArray,
+        source: "local",
+        deleted: false,
+      };
+      if (existingIdx >= 0) {
+        trial[existingIdx] = newEntry;
+      } else {
+        trial.push(newEntry);
+      }
+      var size = estimateRomfsSize(trial);
+      if (totalBytes > 0 && size > totalBytes) {
+        showToast('Cannot add "' + name + '": would overflow partition (' +
+          formatBytes(size) + ' > ' + formatBytes(totalBytes) + ')');
+        return false;
+      }
+      entries = trial;
+      syncActivePartition();
+      return true;
+    }
+
+    function basenameOf(path) {
+      var sep = path.lastIndexOf("/") >= 0 ? "/" : "\\";
+      var i = path.lastIndexOf(sep);
+      return i >= 0 ? path.substring(i + 1) : path;
+    }
+
+    async function addFilesByPath(paths) {
+      var added = 0;
+      for (var i = 0; i < paths.length; i++) {
+        var p = paths[i];
+        try {
+          var bytes = await invoke("cmd_romfs_read_file_bytes", { path: p });
+          var name = basenameOf(p);
+          if (tryAddFile(name, bytes)) added++;
+        } catch (err) {
+          showToast("Failed to read " + p + ": " + err);
+        }
+      }
+      if (added > 0) {
+        render();
+        setStatus("Added " + added + " file(s).");
+      }
+    }
+
+    btnAdd.addEventListener("click", async function() {
+      try {
+        var selected = await dialogOpen({ multiple: true, directory: false });
+        if (!selected) return;
+        var paths = Array.isArray(selected) ? selected : [selected];
+        await addFilesByPath(paths);
+      } catch (e) {
+        showToast("Add file failed: " + e);
+      }
+    });
+
+    btnStock.addEventListener("click", async function() {
+      if (!await ensureConnected()) {
+        return;
+      }
+      btnStock.disabled = true;
+      try {
+        for (var i = 0; i < partitions.length; i++) {
+          var res = await invoke("cmd_romfs_load_stock", { partitionIndex: i });
+          var mapped = res.entries.map(function(e) {
+            return {
+              name: e.name,
+              size: e.size,
+              alignment: e.alignment,
+              data: e.data,
+              source: "device",
+              deleted: false,
+            };
+          });
+          partitionState[i] = {
+            entries: mapped,
+            totalBytes: res.total_bytes,
+            loaded: true,
+          };
+        }
+        loadActivePartition();
+        render();
+        var total = partitionState.reduce(function(acc, s) {
+          return acc + (s ? s.entries.length : 0);
+        }, 0);
+        setStatus("Loaded " + total + " stock file(s).", "success");
+      } catch (e) {
+        setStatus("Load stock failed: " + e, "error");
+      } finally {
+        btnStock.disabled = false;
+        updateCapacity();
+      }
+    });
+
+    btnRead.addEventListener("click", async function() {
+      if (!await ensureConnected()) {
+        return;
+      }
+      // Drop any local edits / cached entries from a previous Stock or Add
+      // session, and reset the partition selector to the first partition.
+      partitionState = partitions.map(function(p) {
+        return { entries: [], totalBytes: p.size, loaded: false };
+      });
+      currentPartIdx = 0;
+      if (partSelect.options.length > 0) {
+        partSelect.value = "0";
+      }
+      loadActivePartition();
+      render();
+      btnRead.disabled = true;
+      btnWrite.disabled = true;
+      showProgress(true);
+      inBootloader = true;
+      try {
+        for (var i = 0; i < partitions.length; i++) {
+          if (partitions.length > 1) {
+            setStatus("Reading partition " + (i + 1) + "/" + partitions.length + "...");
+          }
+          var res = await invoke("cmd_romfs_read", { partitionIndex: i });
+          var mapped = res.entries.map(function(e) {
+            return {
+              name: e.name,
+              size: e.size,
+              alignment: e.alignment,
+              data: e.data,
+              source: "device",
+              deleted: false,
+            };
+          });
+          partitionState[i] = {
+            entries: mapped,
+            totalBytes: res.total_bytes,
+            loaded: true,
+          };
+        }
+        loadActivePartition();
+        render();
+        var total = partitionState.reduce(function(acc, s) {
+          return acc + (s ? s.entries.length : 0);
+        }, 0);
+        setStatus("Read " + total + " file(s) from device.", "success");
+      } catch (e) {
+        setStatus("Read failed: " + e, "error");
+      } finally {
+        showProgress(false);
+        btnRead.disabled = false;
+        updateCapacity();
+      }
+    });
+
+    btnWrite.addEventListener("click", async function() {
+      var kept = entries.filter(function(e) { return !e.deleted; });
+      if (kept.length === 0) {
+        showToast("Nothing to write.");
+        return;
+      }
+      var size = estimateRomfsSize(kept);
+      if (totalBytes > 0 && size > totalBytes) {
+        showToast("Cannot write: image exceeds partition size.");
+        return;
+      }
+      if (!await ensureConnected()) {
+        return;
+      }
+      btnRead.disabled = true;
+      btnWrite.disabled = true;
+      showProgress(true);
+      inBootloader = true;
+      try {
+        var payload = kept.map(function(e) {
+          return { name: e.name, alignment: e.alignment, data: e.data };
+        });
+        await invoke("cmd_romfs_write", {
+          partitionIndex: currentPartIdx,
+          entries: payload,
+        });
+        inBootloader = false;
+        setStatus("Write complete. Device reset.", "success");
+      } catch (e) {
+        setStatus("Write failed: " + e, "error");
+      } finally {
+        showProgress(false);
+        btnRead.disabled = false;
+        updateCapacity();
+      }
+    });
+
+    btnCancel.addEventListener("click", function() {
+      exitAndClose();
+    });
+
+    partSelect.addEventListener("change", function() {
+      syncActivePartition();
+      currentPartIdx = parseInt(partSelect.value, 10);
+      loadActivePartition();
+      render();
+      updateCapacity();
+    });
+
+    async function refreshPartitions() {
+      try {
+        partitions = await invoke("cmd_romfs_partitions");
+      } catch (e) {
+        partitions = [];
+      }
+      partitionState = partitions.map(function(p) {
+        return { entries: [], totalBytes: p.size, loaded: false };
+      });
+      currentPartIdx = 0;
+      if (partitions.length === 0) {
+        partSelect.innerHTML = '<option value="-1">none</option>';
+        partSelect.disabled = true;
+      } else {
+        var html = "";
+        for (var i = 0; i < partitions.length; i++) {
+          html += '<option value="' + i + '">' +
+            partitionDescription(partitions[i]) + '</option>';
+        }
+        partSelect.innerHTML = html;
+        partSelect.disabled = false;
+      }
+      loadActivePartition();
+      updateCapacity();
+    }
+
+    function partitionDescription(p) {
+      var parts = [p.label];
+      if (p.base) {
+        parts.push("@ " + p.base);
+      }
+      parts.push(formatBytes(p.size));
+      return parts.join(" ");
+    }
+
+    async function exitAndClose() {
+      if (closing) {
+        return;
+      }
+      closing = true;
+
+      if (inBootloader) {
+        try {
+          setStatus("Exiting DFU mode...");
+          await invoke("cmd_dfu_exit");
+          inBootloader = false;
+        } catch (err) {
+          setStatus("DFU exit failed: " + err, "error");
+        }
+      }
+
+      await getCurrentWindow().destroy();
+    }
+
+    document.addEventListener("keydown", function(e) {
+      if (e.key !== "Escape") {
+        return;
+      }
+
+      if (ctxMenu.classList.contains("visible")) {
+        hideContextMenu();
+        return;
+      }
+
+      exitAndClose();
+    });
+
+    getCurrentWindow().onCloseRequested(function(event) {
+      if (closing) {
+        return;
+      }
+      event.preventDefault();
+      exitAndClose();
+    });
+
+    // Drag and drop files
+    getCurrentWebview().onDragDropEvent(function(event) {
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        dropOverlay.classList.add("visible");
+      } else if (event.payload.type === "leave") {
+        dropOverlay.classList.remove("visible");
+      } else if (event.payload.type === "drop") {
+        dropOverlay.classList.remove("visible");
+        var paths = event.payload.paths;
+        if (paths && paths.length) {
+          addFilesByPath(paths);
+        }
+      }
+    });
+
+    // dfu-status carries two payload types:
+    //   string  -- high-level stage update ("Entering bootloader...", etc.).
+    //   number  -- byte count from a dfu-util progress tick; drives the
+    //              progress bar without overwriting the stage text.
+    // dfu-output is the raw dfu-util log forwarded for the log pane only.
+    listen("dfu-status", function(ev) {
+      if (typeof ev.payload === "string") {
+        setStatus(ev.payload);
+      } else if (typeof ev.payload === "number") {
+        updateProgressFromBytes(ev.payload);
+      }
+    });
+
+    listen("dfu-total", function(ev) {
+      dfuOpBytes = ev.payload;
+      progressFill.style.width = "0%";
+    });
+
+    listen("dfu-done", function() {
+      dfuOpBytes = 0;
+    });
+
+    async function ensureConnected() {
+      setStatus("Connecting to device...");
+      var ok = await window.openmv.ensureConnected(500);
+      if (!ok) {
+        setStatus("No board with a ROMFS partition is connected.", "error");
+        return false;
+      }
+      await refreshPartitions();
+      render();
+      return true;
+    }
+
+    (async function init() {
+      // Populate the partition selector if a board is already connected,
+      // but do not trigger a (re)connect attempt -- that happens lazily on
+      // Read / Load Defaults / Write.
+      await refreshPartitions();
+      render();
+      setStatus("Idle.");
+    })();
+  </script>
+</body>
+</html>

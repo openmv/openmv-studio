@@ -9,6 +9,7 @@ mod checksum;
 mod dfu;
 mod protocol;
 mod resources;
+mod romfs;
 mod training;
 mod transport;
 
@@ -22,22 +23,26 @@ use tauri::{Emitter, Manager, State};
 use camera::{Camera, Command};
 use protocol::{SystemInfo, VersionInfo};
 
-struct Board {
-    vid: u16,
-    pid: u16,
-    board_type: String,
-    display: String,
-    bootloader_vid_pid: Option<String>,
-    fs_partition: Option<Vec<String>>,
+#[derive(Clone)]
+pub(crate) struct Board {
+    pub(crate) vid: u16,
+    pub(crate) pid: u16,
+    pub(crate) board_type: String,
+    pub(crate) display: String,
+    pub(crate) bootloader_vid_pid: Option<String>,
+    pub(crate) fs_partition: Option<Vec<String>>,
+    pub(crate) romfs_partition: Option<Vec<String>>,
+    pub(crate) romfs_size: Option<Vec<usize>>,
+    pub(crate) in_firmware_mode: bool,
 }
 
-struct AppState {
-    boards: Vec<Board>,
-    sensors: serde_json::Value,
-    cmd_tx: Option<mpsc::Sender<Command>>,
-    worker_thread: Option<std::thread::JoinHandle<()>>,
-    sysinfo: Option<SystemInfo>,
-    verinfo: Option<VersionInfo>,
+pub(crate) struct AppState {
+    pub(crate) boards: Vec<Board>,
+    pub(crate) sensors: serde_json::Value,
+    pub(crate) cmd_tx: Option<mpsc::Sender<Command>>,
+    pub(crate) worker_thread: Option<std::thread::JoinHandle<()>>,
+    pub(crate) sysinfo: Option<SystemInfo>,
+    pub(crate) verinfo: Option<VersionInfo>,
 }
 
 struct SetupComplete(AtomicBool);
@@ -102,6 +107,22 @@ fn load_boards(app: &tauri::AppHandle) -> Vec<Board> {
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect()
                 }),
+                romfs_partition: b["romfs_partition"].as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
+                romfs_size: b["romfs_size"].as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            v.as_str().and_then(|s| {
+                                let s = s.trim_start_matches("0x");
+                                usize::from_str_radix(s, 16).ok()
+                            })
+                        })
+                        .collect()
+                }),
+                in_firmware_mode: false,
             })
         })
         .collect()
@@ -394,6 +415,256 @@ fn cmd_erase_filesystem(
         fs_partition,
     };
     dfu::erase_filesystem(&app, &config)
+}
+
+#[tauri::command]
+fn cmd_romfs_read_file_bytes(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
+}
+
+// Load the stock ROMFS image that ships with the firmware bundle for the
+// resolved board's partition <partition_index>. Path:
+//   <app_data_dir>/resources/firmware/<BOARD>/romfs<N>.img
+#[tauri::command]
+fn cmd_romfs_load_stock(
+    partition_index: usize,
+    app: tauri::AppHandle,
+    state: State<Arc<Mutex<AppState>>>,
+) -> Result<serde_json::Value, String> {
+    let board = dfu::resolve_dfu_board(&app, state.inner())?;
+    let parts = board.romfs_partition.as_ref().unwrap();
+    let sizes = board.romfs_size.as_deref().unwrap_or(&[]);
+    let part_size = sizes
+        .get(partition_index)
+        .copied()
+        .ok_or("Missing partition size")?;
+    if partition_index >= parts.len() {
+        return Err("Invalid partition index".to_string());
+    }
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?
+        .join("resources")
+        .join("firmware")
+        .join(&board.board_type);
+    let img_path = dir.join(format!("romfs{}.img", partition_index));
+    let raw = std::fs::read(&img_path)
+        .map_err(|e| format!("No stock ROMFS image at {}: {}", img_path.display(), e))?;
+    let entries = romfs::parse(&raw)?;
+    let used = romfs::estimate_size(&entries);
+    let entries_json: Vec<_> = entries
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "name": e.name,
+                "size": e.data.len(),
+                "alignment": e.alignment,
+                "data": e.data,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "entries": entries_json,
+        "used_bytes": used,
+        "total_bytes": part_size,
+    }))
+}
+
+#[tauri::command]
+fn cmd_romfs_partitions(
+    app: tauri::AppHandle,
+    state: State<Arc<Mutex<AppState>>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let board = match dfu::resolve_dfu_board(&app, state.inner()) {
+        Ok(b) => b,
+        Err(_) => return Ok(vec![]),
+    };
+    let parts = board.romfs_partition.as_ref().unwrap();
+    let sizes = board.romfs_size.as_deref().unwrap_or(&[]);
+    Ok(parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            // Extract (alt_setting, base_address) from the dfu-util argument
+            // string. STM32 boards typically only specify `-a N`. Arduino
+            // DfuSe boards specify `-a N -s 0xADDR:0xSIZE`.
+            let mut alt: Option<u32> = None;
+            let mut base: Option<String> = None;
+            let mut tokens = p.split_whitespace();
+            while let Some(tok) = tokens.next() {
+                if tok == "-a" {
+                    if let Some(v) = tokens.next() {
+                        alt = v.parse::<u32>().ok();
+                    }
+                } else if tok == "-s" {
+                    if let Some(v) = tokens.next() {
+                        let addr = v.split(':').next().unwrap_or(v);
+                        base = Some(addr.to_string());
+                    }
+                }
+            }
+            serde_json::json!({
+                "index": i,
+                "label": match alt {
+                    Some(a) => format!("Partition {} (alt {})", i, a),
+                    None => format!("Partition {}", i),
+                },
+                "alt": alt,
+                "base": base,
+                "args": p,
+                "size": sizes.get(i).copied().unwrap_or(0),
+            })
+        })
+        .collect())
+}
+
+fn enter_dfu_mode(
+    app: &tauri::AppHandle,
+    state: &Arc<Mutex<AppState>>,
+    partition_index: usize,
+) -> Result<(String, String, usize), String> {
+    let resolved = dfu::resolve_dfu_board(app, state)?;
+    let part_args = resolved
+        .romfs_partition
+        .as_ref()
+        .unwrap()
+        .get(partition_index)
+        .cloned()
+        .ok_or("Invalid partition index")?;
+    let part_size = resolved
+        .romfs_size
+        .as_deref()
+        .unwrap_or(&[])
+        .get(partition_index)
+        .copied()
+        .ok_or("Missing partition size")?;
+
+    if resolved.in_firmware_mode {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        if let Some(ref tx) = st.cmd_tx {
+            let _ = tx.send(Command::Bootloader);
+            drop(st);
+            let _ = app.emit("dfu-status", "Entering bootloader...");
+            std::thread::sleep(Duration::from_secs(3));
+        }
+    }
+
+    Ok((resolved.bootloader_vid_pid.unwrap(), part_args, part_size))
+}
+
+#[tauri::command]
+async fn cmd_romfs_read(
+    partition_index: usize,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    dfu_running: State<'_, Arc<DfuRunning>>,
+) -> Result<serde_json::Value, String> {
+    let state_arc = state.inner().clone();
+    let handle = app.clone();
+    let running = dfu_running.inner().clone();
+    running.0.store(true, Ordering::SeqCst);
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        let (vid_pid, part_args, part_size) =
+            enter_dfu_mode(&handle, &state_arc, partition_index)?;
+
+        let raw = dfu::upload_partition(&handle, &vid_pid, &part_args, part_size)?;
+        let _ = handle.emit("dfu-status", "Parsing ROMFS image...");
+        let entries = romfs::parse(&raw)?;
+        let used = romfs::estimate_size(&entries);
+
+        let entries_json: Vec<_> = entries
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "name": e.name,
+                    "size": e.data.len(),
+                    "alignment": e.alignment,
+                    "data": e.data,
+                })
+            })
+            .collect();
+
+        let _ = handle.emit("dfu-status", "ROMFS read complete.");
+        let _ = handle.emit("dfu-done", ());
+
+        Ok(serde_json::json!({
+            "entries": entries_json,
+            "used_bytes": used,
+            "total_bytes": part_size,
+        }))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+    running.0.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
+async fn cmd_romfs_write(
+    partition_index: usize,
+    entries: Vec<serde_json::Value>,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    dfu_running: State<'_, Arc<DfuRunning>>,
+) -> Result<(), String> {
+    let state_arc = state.inner().clone();
+
+    let mut romfs_entries: Vec<romfs::RomfsEntry> = Vec::with_capacity(entries.len());
+    for e in entries {
+        let name = e["name"]
+            .as_str()
+            .ok_or("Missing entry name")?
+            .to_string();
+        let alignment = e["alignment"].as_u64().unwrap_or(4) as u32;
+        let data: Vec<u8> = e["data"]
+            .as_array()
+            .ok_or("Missing entry data")?
+            .iter()
+            .map(|v| v.as_u64().unwrap_or(0) as u8)
+            .collect();
+        romfs_entries.push(romfs::RomfsEntry {
+            name,
+            data,
+            alignment,
+        });
+    }
+
+    let handle = app.clone();
+    let running = dfu_running.inner().clone();
+    running.0.store(true, Ordering::SeqCst);
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let (vid_pid, part_args, part_size) =
+            enter_dfu_mode(&handle, &state_arc, partition_index)?;
+        let image = romfs::build(&romfs_entries, part_size)?;
+        let _ = handle.emit("dfu-total", image.len() as u64);
+        dfu::download_partition(&handle, &vid_pid, &part_args, &image, true)?;
+        let _ = handle.emit("dfu-status", "ROMFS write complete.");
+        let _ = handle.emit("dfu-done", ());
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+    running.0.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
+async fn cmd_dfu_exit(
+    app: tauri::AppHandle,
+    dfu_running: State<'_, Arc<DfuRunning>>,
+    dfu_child: State<'_, Arc<dfu::DfuChild>>,
+) -> Result<(), String> {
+    dfu_child.kill_running();
+
+    let handle = app.clone();
+    let running = dfu_running.inner().clone();
+    running.0.store(true, Ordering::SeqCst);
+    let result = tauri::async_runtime::spawn_blocking(move || dfu::exit_dfu(&handle))
+        .await
+        .map_err(|e| format!("Task failed: {}", e))?;
+    running.0.store(false, Ordering::SeqCst);
+    result
 }
 
 #[tauri::command]
@@ -920,6 +1191,7 @@ pub fn run() {
         .manage(Arc::new(SetupComplete(AtomicBool::new(false))))
         .manage(Arc::new(ConnectRunning(AtomicBool::new(false))))
         .manage(Arc::new(DfuRunning(AtomicBool::new(false))))
+        .manage(Arc::new(dfu::DfuChild::new()))
         .manage(Arc::new(training::MlProcessState::new()))
         .manage(Arc::new(Mutex::new(AppState {
             boards: vec![],
@@ -941,6 +1213,12 @@ pub fn run() {
             cmd_reset,
             cmd_bootloader,
             cmd_erase_filesystem,
+            cmd_romfs_partitions,
+            cmd_romfs_read,
+            cmd_romfs_write,
+            cmd_romfs_read_file_bytes,
+            cmd_romfs_load_stock,
+            cmd_dfu_exit,
             cmd_enable_streaming,
             cmd_set_stream_source,
             cmd_get_memory,

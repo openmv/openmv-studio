@@ -15,6 +15,7 @@ import { hideWelcome } from "./welcome";
 import { createFile, switchToFile, openFiles } from "./files";
 import { openPinoutViewer } from "./pinout";
 import { openTrainingWindow } from "./training";
+import { openRomfsEditor } from "./romfs-editor";
 
 // --- Init and tab switching ---
 
@@ -1502,6 +1503,11 @@ function initSidebar() {
 
       if (panel === "pinout") {
         openPinoutViewer();
+        return;
+      }
+
+      if (panel === "romfs") {
+        openRomfsEditor();
         return;
       }
 
