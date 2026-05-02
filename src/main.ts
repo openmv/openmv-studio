@@ -158,6 +158,27 @@ editor.onDidChangeCursorPosition((e) => {
 
 // --- Terminal ---
 
+// Disarm browser drag-selection gesture inside the tools panel so a drag that
+// crosses into the console doesn't start selecting console text. Skip
+// interactive elements so sliders/buttons/inputs still work normally.
+(() => {
+  const panel = document.querySelector(".tools-panel");
+  if (!panel) {
+    return;
+  }
+  panel.addEventListener("mousedown", (e) => {
+    const me = e as MouseEvent;
+    if (me.button !== 0) {
+      return;
+    }
+    const t = me.target as HTMLElement;
+    if (t.closest("input, textarea, select, button, [contenteditable]")) {
+      return;
+    }
+    me.preventDefault();
+  });
+})();
+
 function termLog(text: string, cls: string = "") {
   const el = document.getElementById("terminal-output");
 

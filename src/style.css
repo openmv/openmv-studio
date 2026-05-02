@@ -70,9 +70,14 @@ body {
   user-select: none;
 }
 
-#monaco-editor, .terminal-content {
+.terminal-content {
   -webkit-user-select: text;
   user-select: text;
+}
+
+#monaco-editor, #monaco-editor * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 .ide-layout {
