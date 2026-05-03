@@ -359,27 +359,12 @@ fn cmd_bootloader(state: State<Arc<Mutex<AppState>>>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command(async)]
-fn cmd_erase_filesystem(
+#[tauri::command]
+async fn cmd_erase_filesystem(
     app: tauri::AppHandle,
-    state: State<Arc<Mutex<AppState>>>,
-    dfu_running: State<Arc<DfuRunning>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    dfu_running: State<'_, Arc<DfuRunning>>,
 ) -> Result<(), String> {
-    if dfu_running
-        .0
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return Err("DFU already in progress".into());
-    }
-    struct Guard<'a>(&'a AtomicBool);
-    impl Drop for Guard<'_> {
-        fn drop(&mut self) {
-            self.0.store(false, Ordering::SeqCst);
-        }
-    }
-    let _guard = Guard(&dfu_running.0);
-
     let (vid_pid, fs_partition) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let info = st.sysinfo.as_ref().ok_or("Not connected")?;
@@ -399,22 +384,25 @@ fn cmd_erase_filesystem(
         (vid_pid, fs_partition)
     };
 
-    // Enter bootloader (disconnects the camera)
-    {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        if let Some(ref tx) = st.cmd_tx {
-            let _ = tx.send(Command::Bootloader);
-        }
+    if let Some(tx) = state.lock().map_err(|e| e.to_string())?.cmd_tx.clone() {
+        let _ = tx.send(Command::Bootloader);
     }
 
-    // Wait for worker to finish and USB re-enumeration
-    std::thread::sleep(Duration::from_secs(3));
-
-    let config = dfu::DfuConfig {
-        vid_pid,
-        fs_partition,
-    };
-    dfu::erase_filesystem(&app, &config)
+    let handle = app.clone();
+    let running = dfu_running.inner().clone();
+    running.0.store(true, Ordering::SeqCst);
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        std::thread::sleep(Duration::from_secs(3));
+        let config = dfu::DfuConfig {
+            vid_pid,
+            fs_partition,
+        };
+        dfu::erase_filesystem(&handle, &config)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+    running.0.store(false, Ordering::SeqCst);
+    result
 }
 
 #[tauri::command]
@@ -1470,11 +1458,6 @@ pub fn run() {
                     let done = window.state::<Arc<SetupComplete>>();
                     if !done.0.load(Ordering::SeqCst) {
                         window.app_handle().exit(0);
-                    }
-                } else if window.label() == "dfu-progress" {
-                    let running = window.state::<Arc<AtomicBool>>();
-                    if running.load(Ordering::SeqCst) {
-                        api.prevent_close();
                     }
                 }
             }

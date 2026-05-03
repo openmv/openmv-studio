@@ -64,15 +64,18 @@
   <div id="footer">
     <button id="btn-close" disabled>Close</button>
   </div>
+  <script src="/connect-helper.js"></script>
   <script>
     var listen = window.__TAURI__.event.listen;
+    var invoke = window.__TAURI__.core.invoke;
     var appWindow = window.__TAURI__.window.getCurrentWindow();
 
     var statusEl = document.getElementById("status");
     var logEl = document.getElementById("log");
     var progressBar = document.getElementById("progress-bar");
     var btnClose = document.getElementById("btn-close");
-    var done = false;
+    var inBootloader = false;
+    var closing = false;
 
     function appendLog(text) {
       var line = document.createElement("div");
@@ -81,9 +84,11 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // dfu-status carries strings (stage updates) and numbers (per-tick byte
-    // counts). We don't know the partition size here, so we keep the bar
-    // indeterminate during the operation and let dfu-done jump it to 100%.
+    function setStatus(text) {
+      statusEl.textContent = text;
+      appendLog(text);
+    }
+
     listen("dfu-status", function(event) {
       if (typeof event.payload === "string") {
         statusEl.textContent = event.payload;
@@ -96,23 +101,65 @@
     });
 
     listen("dfu-done", function() {
-      done = true;
+      inBootloader = false;
       btnClose.disabled = false;
       progressBar.classList.remove("indeterminate");
       progressBar.style.width = "100%";
     });
 
-    btnClose.addEventListener("click", function() {
-      if (done) {
-        appWindow.destroy();
+    async function exitAndClose() {
+      if (closing) {
+        return;
+      }
+      closing = true;
+
+      if (inBootloader) {
+        try {
+          setStatus("Exiting DFU mode...");
+          await invoke("cmd_dfu_exit");
+          inBootloader = false;
+        } catch (err) {
+          setStatus("DFU exit failed: " + err);
+        }
+      }
+
+      await appWindow.destroy();
+    }
+
+    btnClose.addEventListener("click", exitAndClose);
+
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        exitAndClose();
       }
     });
 
-    document.addEventListener("keydown", function(e) {
-      if (e.key === "Escape" && done) {
-        appWindow.destroy();
+    appWindow.onCloseRequested(function(event) {
+      if (closing) {
+        return;
       }
+      event.preventDefault();
+      exitAndClose();
     });
+
+    (async function init() {
+      setStatus("Connecting to device...");
+      var ok = await window.openmv.ensureConnected(2000);
+      if (!ok) {
+        setStatus("No supported board connected.");
+        btnClose.disabled = false;
+        return;
+      }
+      inBootloader = true;
+      btnClose.disabled = false;
+      try {
+        await invoke("cmd_erase_filesystem");
+      } catch (err) {
+        setStatus("Erase failed: " + err);
+        inBootloader = false;
+        progressBar.classList.remove("indeterminate");
+      }
+    })();
   </script>
 </body>
 </html>

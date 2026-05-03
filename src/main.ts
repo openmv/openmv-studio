@@ -705,7 +705,9 @@ async function toggleRunStop() {
 }
 
 async function eraseFilesystem() {
-  if (!state.isConnected) {
+  const existing = await WebviewWindow.getByLabel("dfu-progress");
+  if (existing) {
+    await existing.setFocus();
     return;
   }
 
@@ -721,23 +723,12 @@ async function eraseFilesystem() {
     parent: "main",
   });
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      win.once("tauri://created", () => resolve());
-      win.once("tauri://error", (e) => reject(e));
-    });
-  } catch (e: any) {
+  win.once("tauri://created", () => {
+    win.setZoom(state.uiScale);
+  });
+  win.once("tauri://error", (e) => {
     console.error("Failed to create progress window:", e);
-    return;
-  }
-
-  win.setZoom(state.uiScale);
-
-  try {
-    await invoke("cmd_erase_filesystem");
-  } catch (e: any) {
-    console.error("Erase filesystem failed:", e);
-  }
+  });
 }
 
 document
