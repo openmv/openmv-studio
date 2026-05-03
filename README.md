@@ -25,52 +25,21 @@ Communication is hybrid event-driven and polling:
   stats, and dynamic CBOR channels at user-configurable intervals. The I/O
   thread itself polls the serial port with a 1 ms timeout when no commands are
   queued, keeping latency low without busy-waiting.
-
+  
 ## Status
  
 ### New Features
-- [x] Multi-sensor CSI source selection
-- [x] 3D interactive pinout viewer
-- [x] Custom CBOR channel display (scalars, depth heatmaps)
-- [x] Live memory usage graphs and statistics
-- [x] Real-time camera FPS readout
+- Multi-sensor CSI source selection
+- 3D interactive pinout viewer
+- Custom CBOR channel display (scalars, depth heatmaps)
+- Live memory usage graphs and statistics
+- Real-time camera FPS readout
+- End-to-end ML training pipeline with support for YOLO v8/v11 object detection.
+- One-click deploy of the compiled model + labels to the connected board's ROMFS partition over DFU.
 
-### Implemented
-- [x] Connect/disconnect (USB serial, VID/PID auto-detect)
-- [x] Run/stop scripts (single toggle button, Cmd+R / Ctrl+E)
-- [x] Serial terminal (stdout polling)
-- [x] Framebuffer viewer (JPEG + RGB565, binary IPC)
-- [x] Protocol V2 in Rust (transport state machine, CRC, channels, fragmentation)
-- [x] I/O thread with mpsc command/response queues
-- [x] Auto-resync on protocol errors
-- [x] Monaco editor with Python highlighting
-- [x] Pyright-based Python autocompletion
-- [x] Resizable panels with magnetic snap (terminal/tools alignment)
-- [x] File management (new, open, save, save-as, close, tabs)
-- [x] File watching for external changes
-- [x] Recent files tracking
-- [x] Settings persistence (tauri-plugin-store, saves to settings.json)
-- [x] Dark + Light themes with System option
-- [x] macOS native menu bar (File, Edit, Tools, Device, View, Help)
-- [x] macOS-style settings dialog (General, Editor, Connection, FB, Shortcuts tabs)
-- [x] Configurable keyboard shortcuts with rebinding UI
-- [x] UI scaling slider (50-200%) with zoom compensation
-- [x] Welcome screen when no files open
-- [x] Reopen files on startup from saved settings
-- [x] Panel sizes persisted (grid layout, FB/tools ratio)
-- [x] Histogram with live stats (mean, median, stdev, min, max, mode)
-- [x] Board info tab
-- [x] Memory stats polling tab
-- [x] Protocol stats polling tab
-- [x] Channels tab (polls dynamic CBOR channels, renders scalars and depth heatmaps)
-- [x] Sidebar panels (Files, Examples, Docs)
-- [x] Examples browser (loaded from device)
-
-### Pending
+### Missing Features
 - [ ] Firmware update (DFU, IMX, Alif bootloaders)
-- [ ] ROMFS editor
-- [ ] Machine vision tools (threshold editor, AprilTag generator)
-- [ ] Model convesion tools
+- [ ] Firmware recovery
 - [ ] Profiler (PMU data display)
 - [ ] Video recording
 
