@@ -285,7 +285,7 @@ function initTabScroll() {
 
   bar.addEventListener("wheel", (e) => {
     e.preventDefault();
-    bar.scrollLeft += e.deltaY || e.deltaX;
+    bar.scrollLeft += e.deltaX + e.deltaY;
   }, { passive: false });
 
   bar.addEventListener("scroll", updateScrollButtons);

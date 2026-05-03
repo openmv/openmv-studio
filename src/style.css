@@ -319,7 +319,8 @@ body {
 /* ---- TERMINAL ---- */
 .terminal-panel {
   background: var(--bg-panel); border-top: 1px solid var(--border-subtle);
-  display: flex; flex-direction: column; min-height: 0;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; overflow: hidden;
 }
 .terminal-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -342,6 +343,7 @@ body {
 .terminal-content {
   flex: 1; overflow: auto; padding: 8px 12px;
   font-family: var(--font-code); font-size: 12px; line-height: 1.6; color: var(--text-secondary);
+  min-width: 0; overflow-wrap: anywhere;
 }
 .terminal-content .info-line { color: var(--text-tertiary); }
 .terminal-content .log-line { color: #6a9fb5; }
