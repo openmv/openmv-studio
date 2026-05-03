@@ -159,11 +159,18 @@ def stedge_compile(model_path, build_dir, models_dir, stedgeai_dir):
     for var in ["RM", "CFLAGS", "CPPFLAGS", "CXXFLAGS", "LDFLAGS", "MAKEFLAGS"]:
         env.pop(var, None)
 
+    # --inputs-ch-position chlast presents NHWC IO at the model boundary
+    # (stedgeai inserts a transpose) so the on-camera preprocessing - which
+    # reads channels from the last dim of input_shape - sees (1,H,W,C) like
+    # the old TFLite path. The internal graph stays NCHW.
     generate_command = [
         stedgeai_bin,
         "generate",
         "--target", "stm32n6",
         "--model", model_path,
+        "--inputs-ch-position", "chlast",
+        "--input-data-type", "uint8",
+        "--output-data-type", "float32",
         "--relocatable",
         "--st-neural-art", "default@{}".format(config),
         "--workspace", os.path.join(output_dir, "workspace"),
@@ -199,21 +206,88 @@ def stedge_compile(model_path, build_dir, models_dir, stedgeai_dir):
     return out
 
 
-def compile_for_target(model_path, target, models_dir, stedgeai_dir):
-    # Build artifacts go in a sibling dir to keep the export dir clean.
-    build_dir = os.path.join(os.path.dirname(model_path), "compile")
+def quantize_onnx_qdq(onnx_in, calib_npy, work_dir):
+    # Static PTQ on the original ONNX so we can hand a QDQ-format model
+    # directly to stedgeai for the st-neural-art target. Avoids the
+    # onnx2tf -> TFLite hop and its NCHW->NHWC graph rewrite. The
+    # calibration NPY is shared with the TFLite path.
+    from onnxruntime.quantization import (
+        CalibrationDataReader,
+        CalibrationMethod,
+        QuantFormat,
+        QuantType,
+        quantize_static,
+    )
+
+    # calib_npy is BHWC float32 in [0, 255] (matches what onnx2tf consumes
+    # via the [[[[0,0,0]]]] / [[[[255,255,255]]]] range hints). The
+    # exported ONNX expects NCHW float32 in [0, 1] (Ultralytics default),
+    # so per-sample we transpose and scale.
+    arr = np.load(calib_npy).astype(np.float32) / 255.0
+    arr = np.transpose(arr, (0, 3, 1, 2))
+
+    # Read the actual input tensor name from the ONNX rather than
+    # hardcoding "images" -- protects us if the YOLO version changes.
+    import onnx as _onnx
+    model = _onnx.load(onnx_in)
+    input_name = model.graph.input[0].name
+
+    class _NpyReader(CalibrationDataReader):
+        def __init__(self, samples, name):
+            self._iter = iter(samples)
+            self._name = name
+
+        def get_next(self):
+            try:
+                x = next(self._iter)
+            except StopIteration:
+                return None
+            return {self._name: np.expand_dims(x, 0)}
+
+    # stedgeai's Neural-ART backend rejects QUInt8 activations in the
+    # QDQ graph ("Onnx exporting model with quantized unsigned integer
+    # format is not supported"); use signed int8 for both activations and
+    # weights. The TFLite path got away with uint8 IN because stedgeai
+    # reads TFLite quant params as static tensor-format hints rather than
+    # a graph-level QDQ scheme.
+    qdq_onnx = os.path.join(work_dir, "best_qdq.onnx")
+    quantize_static(
+        model_input=onnx_in,
+        model_output=qdq_onnx,
+        calibration_data_reader=_NpyReader(arr, input_name),
+        quant_format=QuantFormat.QDQ,
+        per_channel=True,
+        activation_type=QuantType.QInt8,
+        weight_type=QuantType.QInt8,
+        # Percentile clips activation outliers so int8 levels track real
+        # signal; preserves YOLO cls-score precision on small datasets
+        # where MinMax wastes range and Entropy histograms are too sparse.
+        calibrate_method=CalibrationMethod.Percentile,
+        extra_options={
+            "CalibPercentile": 99.999,
+        },
+    )
+    return qdq_onnx
+
+
+def compile_for_target(input_path, output_path, target, models_dir, stedgeai_dir):
+    # input_path is the model fed to the NPU compiler (.tflite for vela,
+    # .tflite or QDQ .onnx for stedgeai). output_path is where the
+    # compiled artifact (network_rel.bin or _vela.tflite contents) is
+    # written -- usually the descriptive .tflite under export/.
+    build_dir = os.path.join(os.path.dirname(output_path), "compile")
     if os.path.exists(build_dir):
         shutil.rmtree(build_dir)
     os.makedirs(build_dir, exist_ok=True)
 
     if target in VELA_TARGET_ARGS:
-        compiled = vela_compile(model_path, build_dir, target, models_dir)
+        compiled = vela_compile(input_path, build_dir, target, models_dir)
     elif target == "st-neural-art":
-        compiled = stedge_compile(model_path, build_dir, models_dir, stedgeai_dir)
+        compiled = stedge_compile(input_path, build_dir, models_dir, stedgeai_dir)
     else:
         raise ValueError("Unsupported target: {}".format(target))
 
-    shutil.copy2(compiled, model_path)
+    shutil.copy2(compiled, output_path)
     shutil.rmtree(build_dir, ignore_errors=True)
 
 
@@ -336,78 +410,92 @@ def main():
     calib_npy = os.path.join(weights_dir, "calib_data.npy")
     np.save(calib_npy, calib_data)
 
-    print(json.dumps({
-        "status": "converting_tflite",
-        "calibration_images": int(calib_data.shape[0]),
-    }), flush=True)
+    # Step 3: produce a quantized model from the ONNX. For st-neural-art
+    # we do PTQ in onnxruntime (QDQ ONNX) and feed that straight to
+    # stedgeai; every other target goes through onnx2tf to produce an
+    # int8 TFLite (Vela needs TFLite, cpu deploys the TFLite as-is).
+    if args.target == "st-neural-art":
+        print(json.dumps({"status": "quantizing_onnx"}), flush=True)
+        src = quantize_onnx_qdq(onnx_file, calib_npy, weights_dir)
+        print(json.dumps({"status": "quantize_done"}), flush=True)
+    else:
+        print(json.dumps({
+            "status": "converting_tflite",
+            "calibration_images": int(calib_data.shape[0]),
+        }), flush=True)
 
-    # Step 3: Convert with onnx2tf. The default flatbuffer_direct backend
-    # works correctly with the tf_wrapper-patched ONNX. input_quant_dtype
-    # and output_quant_dtype force uint8 IN / float32 OUT to match the
-    # reference model's IO contract.
-    saved_model_dir = os.path.join(weights_dir, "best_saved_model")
-    if os.path.exists(saved_model_dir):
-        shutil.rmtree(saved_model_dir)
+        # The default flatbuffer_direct backend works correctly with the
+        # tf_wrapper-patched ONNX. input_quant_dtype and output_quant_dtype
+        # force uint8 IN / float32 OUT to match the reference model's IO
+        # contract.
+        saved_model_dir = os.path.join(weights_dir, "best_saved_model")
+        if os.path.exists(saved_model_dir):
+            shutil.rmtree(saved_model_dir)
 
-    # onnx2tf calls download_test_image_data() during convert for auxiliary
-    # tensor shape inference. Its hardcoded URL returns 404, and the bundled
-    # Python's network kill switch blocks the request anyway. Patch it
-    # in-process to return a deterministic dummy array. Patch BOTH the
-    # source module and the onnx2tf.onnx2tf module: the latter does
-    # `from ...common_functions import download_test_image_data`, so it
-    # holds its own binding that the source-module patch alone won't reach.
-    import onnx2tf
-    import onnx2tf.onnx2tf as _o2t_main
-    import onnx2tf.utils.common_functions as _o2t_cf
+        # onnx2tf calls download_test_image_data() during convert for
+        # auxiliary tensor shape inference. Its hardcoded URL returns 404,
+        # and the bundled Python's network kill switch blocks the request
+        # anyway. Patch it in-process to return a deterministic dummy
+        # array. Patch BOTH the source module and the onnx2tf.onnx2tf
+        # module: the latter does `from ...common_functions import
+        # download_test_image_data`, so it holds its own binding that the
+        # source-module patch alone won't reach.
+        import onnx2tf
+        import onnx2tf.onnx2tf as _o2t_main
+        import onnx2tf.utils.common_functions as _o2t_cf
 
-    def _stub_download_test_image_data():
-        return np.zeros((20, 128, 128, 3), dtype=np.float32)
+        def _stub_download_test_image_data():
+            return np.zeros((20, 128, 128, 3), dtype=np.float32)
 
-    _o2t_cf.download_test_image_data = _stub_download_test_image_data
-    _o2t_main.download_test_image_data = _stub_download_test_image_data
+        _o2t_cf.download_test_image_data = _stub_download_test_image_data
+        _o2t_main.download_test_image_data = _stub_download_test_image_data
 
-    # Suppress json_auto_generator recovery. On any per-op conversion error
-    # onnx2tf otherwise spawns `python -m onnx2tf` in a subprocess (bare
-    # "python", no env) up to 3 times to search for parameter-replacement
-    # fixes. In our bundled-Python sandbox bare "python" doesn't resolve;
-    # even if it did, recovery only writes a hint JSON and re-raises the
-    # original error -- it never retries the conversion. Pass an empty
-    # replacements file so the recovery branch is skipped and errors
-    # propagate immediately.
-    empty_prf = os.path.join(weights_dir, "_no_replacements.json")
-    with open(empty_prf, "w") as f:
-        json.dump({"format_version": 1, "operations": []}, f)
+        # Suppress json_auto_generator recovery. On any per-op conversion
+        # error onnx2tf otherwise spawns `python -m onnx2tf` in a
+        # subprocess (bare "python", no env) up to 3 times to search for
+        # parameter-replacement fixes. In our bundled-Python sandbox bare
+        # "python" doesn't resolve; even if it did, recovery only writes a
+        # hint JSON and re-raises the original error -- it never retries
+        # the conversion. Pass an empty replacements file so the recovery
+        # branch is skipped and errors propagate immediately.
+        empty_prf = os.path.join(weights_dir, "_no_replacements.json")
+        with open(empty_prf, "w") as f:
+            json.dump({"format_version": 1, "operations": []}, f)
 
-    onnx2tf.convert(
-        input_onnx_file_path=onnx_file,
-        output_folder_path=saved_model_dir,
-        not_use_onnxsim=True,
-        verbosity="error",
-        output_integer_quantized_tflite=True,
-        custom_input_op_name_np_data_path=[
-            ["images", calib_npy, [[[[0, 0, 0]]]], [[[[255, 255, 255]]]]],
-        ],
-        enable_batchmatmul_unfold=False,
-        output_signaturedefs=True,
-        input_quant_dtype="uint8",
-        output_quant_dtype="float32",
-        param_replacement_file=empty_prf,
-    )
+        onnx2tf.convert(
+            input_onnx_file_path=onnx_file,
+            output_folder_path=saved_model_dir,
+            not_use_onnxsim=True,
+            verbosity="error",
+            output_integer_quantized_tflite=True,
+            custom_input_op_name_np_data_path=[
+                ["images", calib_npy, [[[[0, 0, 0]]]], [[[[255, 255, 255]]]]],
+            ],
+            enable_batchmatmul_unfold=False,
+            output_signaturedefs=True,
+            input_quant_dtype="uint8",
+            output_quant_dtype="float32",
+            param_replacement_file=empty_prf,
+        )
 
-    print(json.dumps({"status": "tflite_done"}), flush=True)
+        print(json.dumps({"status": "tflite_done"}), flush=True)
 
-    # Step 4: Copy the full_integer_quant variant (uint8 IN / float32 OUT,
-    # full int8 graph). Skip int16-act siblings.
-    integer_quant = None
-    for f in sorted(os.listdir(saved_model_dir)):
-        if "full_integer_quant" in f and "int16" not in f:
-            integer_quant = os.path.join(saved_model_dir, f)
-            break
+        # Pick the full_integer_quant variant (uint8 IN / float32 OUT,
+        # full int8 graph). Skip int16-act siblings.
+        src = None
+        for f in sorted(os.listdir(saved_model_dir)):
+            if "full_integer_quant" in f and "int16" not in f:
+                src = os.path.join(saved_model_dir, f)
+                break
 
-    if not integer_quant or not os.path.exists(integer_quant):
-        print(json.dumps({"error": "full_integer_quant TFLite not found"}), flush=True)
-        sys.exit(1)
+        if not src or not os.path.exists(src):
+            print(json.dumps({"error": "full_integer_quant TFLite not found"}), flush=True)
+            sys.exit(1)
 
+    # Step 4: descriptive dest name and stale .tflite cleanup. The output
+    # is always a .tflite path -- the deploy code globs by extension, and
+    # the file just contains whatever the compile step produced (int8
+    # TFLite, _vela.tflite, or network_rel.bin).
     config_path = os.path.join(args.project, "project.json")
     with open(config_path) as f:
         config = json.load(f)
@@ -432,13 +520,20 @@ def main():
             except OSError:
                 pass
     dest = os.path.join(export_dir, save_name)
-    shutil.copy2(integer_quant, dest)
 
-    # Step 5: Optional NPU compile. Overwrites the .tflite with the
-    # target-specific artifact (Vela _vela.tflite or N6 network_rel.bin).
-    if args.target != "cpu":
+    # Step 5: produce the final dest artifact. cpu deploys the int8
+    # TFLite directly; ethos compiles the int8 TFLite at dest in-place;
+    # st-neural-art reads the QDQ ONNX and writes network_rel.bin to dest.
+    if args.target == "cpu":
+        shutil.copy2(src, dest)
+    elif args.target == "st-neural-art":
         print(json.dumps({"status": "compiling_for_{}".format(args.target)}), flush=True)
-        compile_for_target(dest, args.target, args.models_dir, args.stedgeai_dir)
+        compile_for_target(src, dest, args.target, args.models_dir, args.stedgeai_dir)
+        print(json.dumps({"status": "compile_done"}), flush=True)
+    else:
+        shutil.copy2(src, dest)
+        print(json.dumps({"status": "compiling_for_{}".format(args.target)}), flush=True)
+        compile_for_target(dest, dest, args.target, args.models_dir, args.stedgeai_dir)
         print(json.dumps({"status": "compile_done"}), flush=True)
 
     # Sidecar so Deploy can detect a stale artifact when the target changes.
